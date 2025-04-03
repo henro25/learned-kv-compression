@@ -17,7 +17,8 @@ from tqdm import tqdm
 
 from src.inference.inference import KVCacheInference
 
-def run_benchmark(model_name, autoencoder_path=None, latent_dim=16, sizes=None, output_dir="results"):
+def run_benchmark(model_name, autoencoder_path=None, latent_dim=16, batch_size=1, num_runs=5, 
+                  sizes=None, output_dir="results"):
     """
     Run benchmarks for different KV cache sizes.
     
@@ -25,6 +26,8 @@ def run_benchmark(model_name, autoencoder_path=None, latent_dim=16, sizes=None, 
         model_name (str): Name of the model to use
         autoencoder_path (str, optional): Path to trained autoencoder
         latent_dim (int): Latent dimension of autoencoder
+        batch_size (int): Batch size for compression/decompression operations
+        num_runs (int): Number of runs for timing statistics
         sizes (list): List of KV cache sizes in MB to benchmark
         output_dir (str): Directory to save results
     """
@@ -38,13 +41,16 @@ def run_benchmark(model_name, autoencoder_path=None, latent_dim=16, sizes=None, 
     inference = KVCacheInference(
         model_name=model_name,
         autoencoder_path=autoencoder_path,
-        latent_dim=latent_dim
+        latent_dim=latent_dim,
+        batch_size=batch_size
     )
     
     results = {
         "model": model_name,
         "autoencoder": autoencoder_path,
         "latent_dim": latent_dim,
+        "batch_size": batch_size,
+        "num_runs": num_runs,
         "benchmarks": {}
     }
     
@@ -67,27 +73,36 @@ def run_benchmark(model_name, autoencoder_path=None, latent_dim=16, sizes=None, 
         # Measure time to first token without compression (baseline)
         print("Measuring baseline (no compression)...")
         cpu_kv_cache = tuple((k.cpu(), v.cpu()) for k, v in past_key_values)
-        time_baseline, _ = inference.measure_time_to_first_token(
+        baseline_avg, baseline_std, _ = inference.measure_time_to_first_token(
             generated_text, 
             cpu_kv_cache=cpu_kv_cache, 
-            use_compression=False
+            use_compression=False,
+            num_runs=num_runs
         )
-        size_result["times"]["baseline"] = time_baseline
+        size_result["times"]["baseline"] = {
+            "avg": baseline_avg,
+            "std_dev": baseline_std
+        }
         
         # If autoencoder is provided, measure with compression
         if autoencoder_path:
-            print("Measuring with compression...")
+            print("Compressing KV cache...")
             # Compress KV cache
             compressed_kv = inference.compress_kv_cache(past_key_values)
             cpu_compressed_kv = inference.move_to_cpu(compressed_kv)
             
+            print("Measuring with compression...")
             # Measure time to first token with compression
-            time_compressed, _ = inference.measure_time_to_first_token(
+            compressed_avg, compressed_std, _ = inference.measure_time_to_first_token(
                 generated_text, 
                 cpu_kv_cache=cpu_compressed_kv, 
-                use_compression=True
+                use_compression=True,
+                num_runs=num_runs
             )
-            size_result["times"]["compressed"] = time_compressed
+            size_result["times"]["compressed"] = {
+                "avg": compressed_avg,
+                "std_dev": compressed_std
+            }
             
             # Calculate compression ratio
             original_size = sum(k.nelement() * k.element_size() + v.nelement() * v.element_size() 
@@ -97,11 +112,16 @@ def run_benchmark(model_name, autoencoder_path=None, latent_dim=16, sizes=None, 
             compression_ratio = original_size / compressed_size
             size_result["compression_ratio"] = compression_ratio
             
+            # Calculate speedup
+            speedup = baseline_avg / compressed_avg
+            size_result["speedup"] = speedup
+            
             print(f"Compression ratio: {compression_ratio:.2f}x")
+            print(f"Speedup factor: {speedup:.2f}x")
         
-        print(f"Time to first token (baseline): {time_baseline:.4f}s")
+        print(f"Time to first token (baseline): {baseline_avg:.4f}s ± {baseline_std:.4f}s")
         if autoencoder_path:
-            print(f"Time to first token (compressed): {time_compressed:.4f}s")
+            print(f"Time to first token (compressed): {compressed_avg:.4f}s ± {compressed_std:.4f}s")
         
         # Add to results
         results["benchmarks"][str(size_mb)] = size_result
@@ -129,31 +149,53 @@ def visualize_results(results, output_dir):
     # Extract data for plotting
     sizes = []
     baseline_times = []
+    baseline_errors = []
     compressed_times = []
+    compressed_errors = []
     compression_ratios = []
+    speedups = []
     
     for size_mb, data in results["benchmarks"].items():
         sizes.append(float(size_mb))
-        baseline_times.append(data["times"]["baseline"])
+        
+        # Extract baseline times with error bars
+        baseline_times.append(data["times"]["baseline"]["avg"])
+        baseline_errors.append(data["times"]["baseline"]["std_dev"])
+        
+        # Extract compressed times with error bars if available
         if "compressed" in data["times"]:
-            compressed_times.append(data["times"]["compressed"])
+            compressed_times.append(data["times"]["compressed"]["avg"])
+            compressed_errors.append(data["times"]["compressed"]["std_dev"])
+        
+        # Extract additional metrics if available
         if "compression_ratio" in data:
             compression_ratios.append(data["compression_ratio"])
+        if "speedup" in data:
+            speedups.append(data["speedup"])
     
     # Sort by size
     sorted_indices = np.argsort(sizes)
     sizes = [sizes[i] for i in sorted_indices]
     baseline_times = [baseline_times[i] for i in sorted_indices]
+    baseline_errors = [baseline_errors[i] for i in sorted_indices]
+    
     if compressed_times:
         compressed_times = [compressed_times[i] for i in sorted_indices]
+        compressed_errors = [compressed_errors[i] for i in sorted_indices]
+    
     if compression_ratios:
         compression_ratios = [compression_ratios[i] for i in sorted_indices]
     
-    # Plot time to first token comparison
+    if speedups:
+        speedups = [speedups[i] for i in sorted_indices]
+    
+    # Plot time to first token comparison with error bars
     plt.figure(figsize=(10, 6))
-    plt.plot(sizes, baseline_times, 'o-', label='Baseline (No Compression)')
+    plt.errorbar(sizes, baseline_times, yerr=baseline_errors, fmt='o-', 
+                label='Baseline (No Compression)', capsize=4)
     if compressed_times:
-        plt.plot(sizes, compressed_times, 's-', label='With Compression')
+        plt.errorbar(sizes, compressed_times, yerr=compressed_errors, fmt='s-', 
+                    label='With Compression', capsize=4)
     plt.xscale('log')
     plt.xlabel('KV Cache Size (MB)')
     plt.ylabel('Time to First Token (s)')
@@ -176,8 +218,7 @@ def visualize_results(results, output_dir):
         plt.savefig(os.path.join(output_dir, 'compression_ratio.png'), dpi=300)
     
     # Plot speedup if available
-    if compressed_times:
-        speedups = [b/c for b, c in zip(baseline_times, compressed_times)]
+    if speedups:
         plt.figure(figsize=(10, 6))
         plt.plot(sizes, speedups, 'o-', color='purple')
         plt.xscale('log')
@@ -194,6 +235,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="distilgpt2", help="Model name")
     parser.add_argument("--autoencoder", type=str, help="Path to trained autoencoder")
     parser.add_argument("--latent_dim", type=int, default=16, help="Latent dimension of autoencoder")
+    parser.add_argument("--batch_size", type=int, default=1024, help="Batch size for compression operations")
+    parser.add_argument("--num_runs", type=int, default=5, help="Number of runs for timing statistics")
     parser.add_argument("--sizes", type=float, nargs="+", default=[1, 10, 100, 1000, 3000], 
                         help="KV cache sizes in MB to benchmark")
     parser.add_argument("--output", type=str, default="results", help="Output directory for results")
@@ -205,6 +248,8 @@ if __name__ == "__main__":
         model_name=args.model,
         autoencoder_path=args.autoencoder,
         latent_dim=args.latent_dim,
+        batch_size=args.batch_size,
+        num_runs=args.num_runs,
         sizes=args.sizes,
         output_dir=args.output
     ) 

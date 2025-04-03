@@ -7,6 +7,8 @@ LATENT_DIM="16"
 NUM_EPOCHS="1"
 NUM_TRAIN_TEXTS="10"
 CACHE_SIZE="1"  # 1MB cache size for quick testing
+BATCH_SIZE="512"  # Smaller batch size for faster testing
+NUM_RUNS="3"  # Fewer runs for faster testing
 
 # Create output directories
 TEST_MODEL_DIR="test_models/${MODEL}_latent${LATENT_DIM}"
@@ -21,6 +23,8 @@ echo "Latent dimension: $LATENT_DIM"
 echo "Number of epochs: $NUM_EPOCHS"
 echo "Number of training texts: $NUM_TRAIN_TEXTS"
 echo "Cache size: $CACHE_SIZE MB"
+echo "Batch size: $BATCH_SIZE"
+echo "Number of runs: $NUM_RUNS"
 echo "========================================"
 
 # Step 1: Train a small autoencoder
@@ -38,6 +42,8 @@ python -m src.inference.benchmark \
     --model $MODEL \
     --autoencoder "${TEST_MODEL_DIR}/autoencoder_best.pth" \
     --latent_dim $LATENT_DIM \
+    --batch_size $BATCH_SIZE \
+    --num_runs $NUM_RUNS \
     --sizes $CACHE_SIZE \
     --output $TEST_RESULTS_DIR
 

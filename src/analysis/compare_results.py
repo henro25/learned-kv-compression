@@ -50,14 +50,33 @@ def load_results(result_dirs):
                 "model": model_name,
                 "latent_dim": latent_dim,
                 "cache_size_mb": float(size_mb),
-                "actual_size_mb": data["actual_size_mb"],
-                "baseline_time": data["times"]["baseline"]
+                "actual_size_mb": data["actual_size_mb"]
             }
+            
+            # Handle new results format with avg and std_dev
+            if isinstance(data["times"]["baseline"], dict):
+                record["baseline_time"] = data["times"]["baseline"]["avg"]
+                record["baseline_std"] = data["times"]["baseline"]["std_dev"]
+            else:
+                # Handle older format for backward compatibility
+                record["baseline_time"] = data["times"]["baseline"]
+                record["baseline_std"] = 0.0
             
             # Add compressed data if available
             if "compressed" in data["times"]:
-                record["compressed_time"] = data["times"]["compressed"]
-                record["speedup"] = data["times"]["baseline"] / data["times"]["compressed"]
+                if isinstance(data["times"]["compressed"], dict):
+                    record["compressed_time"] = data["times"]["compressed"]["avg"]
+                    record["compressed_std"] = data["times"]["compressed"]["std_dev"]
+                else:
+                    # Handle older format for backward compatibility
+                    record["compressed_time"] = data["times"]["compressed"]
+                    record["compressed_std"] = 0.0
+                
+                # Calculate speedup if not already provided
+                if "speedup" in data:
+                    record["speedup"] = data["speedup"]
+                else:
+                    record["speedup"] = record["baseline_time"] / record["compressed_time"]
             
             if "compression_ratio" in data:
                 record["compression_ratio"] = data["compression_ratio"]
@@ -78,16 +97,18 @@ def plot_time_comparison(df, output_dir):
     plt.figure(figsize=(12, 8))
     
     # Plot baseline as reference
-    baseline_data = df.drop_duplicates("cache_size_mb")[["cache_size_mb", "baseline_time"]]
-    plt.plot(baseline_data["cache_size_mb"], baseline_data["baseline_time"], 
-             'k--', linewidth=2, label='Baseline (No Compression)')
+    baseline_data = df.drop_duplicates("cache_size_mb")[["cache_size_mb", "baseline_time", "baseline_std"]]
+    plt.errorbar(baseline_data["cache_size_mb"], baseline_data["baseline_time"], 
+             yerr=baseline_data["baseline_std"],
+             fmt='k--', linewidth=2, label='Baseline (No Compression)', capsize=4)
     
     # Plot compressed times for each latent dimension
     for latent_dim in sorted(df["latent_dim"].unique()):
         subset = df[df["latent_dim"] == latent_dim]
         if "compressed_time" in subset.columns:
-            plt.plot(subset["cache_size_mb"], subset["compressed_time"], 
-                     'o-', linewidth=2, label=f'Latent Dim = {latent_dim}')
+            plt.errorbar(subset["cache_size_mb"], subset["compressed_time"], 
+                     yerr=subset["compressed_std"],
+                     fmt='o-', linewidth=2, label=f'Latent Dim = {latent_dim}', capsize=4)
     
     plt.xscale('log')
     plt.yscale('log')
@@ -110,16 +131,16 @@ def plot_time_comparison(df, output_dir):
     bar_width = 0.6
     
     # Add baseline bar
-    baseline_time = largest_df["baseline_time"].iloc[0]
-    plt.bar(bar_positions[0], baseline_time, bar_width, 
-            label='Baseline', color='gray')
+    baseline_row = largest_df.iloc[0]
+    plt.bar(bar_positions[0], baseline_row["baseline_time"], bar_width, 
+            label='Baseline', color='gray', yerr=baseline_row["baseline_std"], capsize=4)
     
     # Add bars for each latent dimension
     for i, latent_dim in enumerate(sorted(largest_df["latent_dim"].unique())):
         subset = largest_df[largest_df["latent_dim"] == latent_dim]
         if "compressed_time" in subset.columns:
             plt.bar(bar_positions[i+1], subset["compressed_time"].iloc[0], bar_width,
-                   label=f'Latent Dim = {latent_dim}')
+                   label=f'Latent Dim = {latent_dim}', yerr=subset["compressed_std"].iloc[0], capsize=4)
     
     plt.xlabel('Method', fontsize=14)
     plt.ylabel('Time to First Token (s)', fontsize=14)
@@ -274,16 +295,18 @@ def generate_report(df, output_dir):
         largest_df = df[df["cache_size_mb"] == largest_size].sort_values("latent_dim")
         
         f.write(f"## Results for {largest_size} MB Cache\n\n")
-        f.write("| Latent Dim | Baseline Time (s) | Compressed Time (s) | Speedup | Compression Ratio |\n")
-        f.write("|------------|------------------|---------------------|---------|-------------------|\n")
+        f.write("| Latent Dim | Baseline Time (s) | Baseline Std | Compressed Time (s) | Compressed Std | Speedup | Compression Ratio |\n")
+        f.write("|------------|------------------|--------------|---------------------|----------------|---------|-------------------|\n")
         
         for _, row in largest_df.iterrows():
             baseline = row["baseline_time"]
+            baseline_std = row.get("baseline_std", "N/A")
             compressed = row.get("compressed_time", "N/A")
+            compressed_std = row.get("compressed_std", "N/A") 
             speedup = row.get("speedup", "N/A")
             compression = row.get("compression_ratio", "N/A")
             
-            f.write(f"| {int(row['latent_dim'])} | {baseline:.4f} | {compressed if isinstance(compressed, str) else compressed:.4f} | {speedup if isinstance(speedup, str) else speedup:.2f} | {compression if isinstance(compression, str) else compression:.2f} |\n")
+            f.write(f"| {int(row['latent_dim'])} | {baseline:.4f} | {baseline_std if isinstance(baseline_std, str) else baseline_std:.4f} | {compressed if isinstance(compressed, str) else compressed:.4f} | {compressed_std if isinstance(compressed_std, str) else compressed_std:.4f} | {speedup if isinstance(speedup, str) else speedup:.2f} | {compression if isinstance(compression, str) else compression:.2f} |\n")
         
         f.write("\n## Conclusions\n\n")
         f.write("- The optimal latent dimension depends on the size of the KV cache and the importance of speed vs. compression.\n")

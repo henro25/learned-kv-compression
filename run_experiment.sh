@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 
-# Usage: sbatch run_experiment.sh [model_name] [latent_dims]
-# Example: sbatch run_experiment.sh distilgpt2 "8 16 32"
+# Usage: sbatch run_experiment.sh [model_name] [latent_dims] [cache_sizes] [num_epochs] [num_train_texts] [batch_size] [num_runs]
+# Example: sbatch run_experiment.sh distilgpt2 "8 16 32" "1 10 100 1000 3000" 5 1000 1024 5
 
 # Default values
 MODEL=${1:-distilgpt2}
@@ -16,6 +16,8 @@ LATENT_DIMS=${2:-"8 16 32"}
 CACHE_SIZES=${3:-"1 10 100 1000 3000"}
 NUM_EPOCHS=${4:-5}
 NUM_TRAIN_TEXTS=${5:-1000}
+BATCH_SIZE=${6:-1024}
+NUM_RUNS=${7:-5}
 OUTPUT_DIR="experiment_results_${MODEL}"
 
 # Print configuration
@@ -25,6 +27,8 @@ echo "Latent dimensions: $LATENT_DIMS"
 echo "Cache sizes (MB): $CACHE_SIZES"
 echo "Number of epochs: $NUM_EPOCHS"
 echo "Number of training texts: $NUM_TRAIN_TEXTS"
+echo "Batch size: $BATCH_SIZE"
+echo "Number of runs for timing: $NUM_RUNS"
 echo "Output directory: $OUTPUT_DIR"
 echo "========================================"
 
@@ -47,6 +51,8 @@ python run_experiments.py \
     --cache_sizes $CACHE_SIZES \
     --num_epochs $NUM_EPOCHS \
     --num_train_texts $NUM_TRAIN_TEXTS \
+    --batch_size $BATCH_SIZE \
+    --num_runs $NUM_RUNS \
     --output_dir $OUTPUT_DIR
 
 echo "Experiment completed at $(date)"

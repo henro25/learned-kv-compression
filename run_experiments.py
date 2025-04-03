@@ -29,6 +29,10 @@ def parse_args():
                         help="Number of epochs for training")
     parser.add_argument("--num_train_texts", type=int, default=1000, 
                         help="Number of training texts to use")
+    parser.add_argument("--batch_size", type=int, default=1024,
+                        help="Batch size for compression operations")
+    parser.add_argument("--num_runs", type=int, default=5,
+                        help="Number of runs for timing statistics")
     parser.add_argument("--skip_training", action="store_true",
                         help="Skip training and use existing models")
     parser.add_argument("--output_dir", type=str, default="experiment_results",
@@ -58,7 +62,7 @@ def train_autoencoder(model_name, latent_dim, num_epochs, num_train_texts, outpu
     
     return os.path.join(model_dir, "autoencoder_best.pth")
 
-def run_benchmark(model_name, autoencoder_path, latent_dim, cache_sizes, output_dir):
+def run_benchmark(model_name, autoencoder_path, latent_dim, cache_sizes, batch_size, num_runs, output_dir):
     """Run benchmarks with the trained autoencoder"""
     result_dir = os.path.join(output_dir, f"benchmark_{model_name}_latent{latent_dim}")
     os.makedirs(result_dir, exist_ok=True)
@@ -68,6 +72,8 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, cache_sizes, output_
         "--model", model_name,
         "--autoencoder", autoencoder_path,
         "--latent_dim", str(latent_dim),
+        "--batch_size", str(batch_size),
+        "--num_runs", str(num_runs),
         "--sizes"
     ] + [str(s) for s in cache_sizes] + [
         "--output", result_dir
@@ -116,6 +122,8 @@ def main():
             autoencoder_path=model_path,
             latent_dim=latent_dim,
             cache_sizes=args.cache_sizes,
+            batch_size=args.batch_size,
+            num_runs=args.num_runs,
             output_dir=args.output_dir
         )
         
@@ -133,6 +141,8 @@ def main():
     print(f"Model: {args.model}")
     print(f"Latent dimensions tested: {args.latent_dims}")
     print(f"KV cache sizes tested: {args.cache_sizes} MB")
+    print(f"Batch size: {args.batch_size}")
+    print(f"Number of runs for timing: {args.num_runs}")
     print(f"Total runtime: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
     print(f"Results saved to: {args.output_dir}")
     

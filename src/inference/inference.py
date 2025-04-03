@@ -13,12 +13,21 @@ import torch
 import numpy as np
 import json
 import argparse
+import statistics
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from src.models.autoencoder import Autoencoder
 
+# Use high-performance timer
+try:
+    # Use time.perf_counter for higher precision timing
+    timer = time.perf_counter
+except AttributeError:
+    # Fallback for older Python versions
+    timer = time.time
+
 class KVCacheInference:
-    def __init__(self, model_name, device=None, autoencoder_path=None, latent_dim=16):
+    def __init__(self, model_name, device=None, autoencoder_path=None, latent_dim=16, batch_size=1):
         """
         Initialize inference with a model and optional autoencoder for compression.
         
@@ -27,9 +36,11 @@ class KVCacheInference:
             device (str, optional): Device to run inference on. Defaults to CUDA if available.
             autoencoder_path (str, optional): Path to the trained autoencoder model
             latent_dim (int): Dimension of the latent space for the autoencoder
+            batch_size (int): Batch size for compression operations
         """
         self.model_name = model_name
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.batch_size = batch_size
         
         # Load tokenizer and model
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -50,6 +61,9 @@ class KVCacheInference:
         # Load autoencoder if provided
         self.autoencoder = None
         if autoencoder_path:
+            if not os.path.exists(autoencoder_path):
+                raise FileNotFoundError(f"Autoencoder model not found at {autoencoder_path}")
+            
             self.autoencoder = Autoencoder(input_dim=self.head_dim, latent_dim=latent_dim).to(self.device)
             self.autoencoder.load_state_dict(torch.load(autoencoder_path, map_location=self.device))
             self.autoencoder.eval()
@@ -119,6 +133,7 @@ class KVCacheInference:
     def compress_kv_cache(self, past_key_values):
         """
         Compress KV cache using the trained autoencoder.
+        Optimized with batched processing for faster compression.
         
         Args:
             past_key_values: Past key values from the model
@@ -134,11 +149,11 @@ class KVCacheInference:
             for layer_idx, (k, v) in enumerate(past_key_values):
                 # Process keys: shape (batch, num_heads, seq_len, head_dim)
                 k_flat = k.view(-1, self.head_dim)
-                k_latent = self.autoencoder.encoder(k_flat)
+                k_latent = self._process_in_batches(k_flat, self.autoencoder.encoder)
                 
                 # Process values: shape (batch, num_heads, seq_len, head_dim)
                 v_flat = v.view(-1, self.head_dim)
-                v_latent = self.autoencoder.encoder(v_flat)
+                v_latent = self._process_in_batches(v_flat, self.autoencoder.encoder)
                 
                 # Store the shapes for reconstruction
                 k_shape = k.shape
@@ -148,9 +163,22 @@ class KVCacheInference:
         
         return compressed_kv
     
+    def _process_in_batches(self, tensor, model_func):
+        """Process a tensor in batches to avoid OOM errors"""
+        result_chunks = []
+        num_items = tensor.size(0)
+        
+        for i in range(0, num_items, self.batch_size):
+            end_idx = min(i + self.batch_size, num_items)
+            batch = tensor[i:end_idx]
+            result_chunks.append(model_func(batch))
+        
+        return torch.cat(result_chunks, dim=0)
+    
     def decompress_kv_cache(self, compressed_kv):
         """
         Decompress KV cache using the trained autoencoder.
+        Optimized with batched processing for faster decompression.
         
         Args:
             compressed_kv: Compressed representation of the KV cache
@@ -165,11 +193,11 @@ class KVCacheInference:
         with torch.no_grad():
             for k_latent, v_latent, k_shape, v_shape in compressed_kv:
                 # Decompress keys
-                k_flat = self.autoencoder.decoder(k_latent)
+                k_flat = self._process_in_batches(k_latent, self.autoencoder.decoder)
                 k = k_flat.view(k_shape)
                 
                 # Decompress values
-                v_flat = self.autoencoder.decoder(v_latent)
+                v_flat = self._process_in_batches(v_latent, self.autoencoder.decoder)
                 v = v_flat.view(v_shape)
                 
                 past_key_values.append((k, v))
@@ -200,50 +228,68 @@ class KVCacheInference:
             ))
         return gpu_compressed_kv
     
-    def measure_time_to_first_token(self, prompt, cpu_kv_cache=None, use_compression=False):
+    def measure_time_to_first_token(self, prompt, cpu_kv_cache=None, use_compression=False, num_runs=5):
         """
         Measure time to first token when continuing generation from a stored KV cache.
+        Runs multiple times and returns average and standard deviation.
         
         Args:
             prompt (str): Prompt to continue from
             cpu_kv_cache: KV cache stored on CPU (compressed or not)
             use_compression (bool): Whether to use compression/decompression
+            num_runs (int): Number of times to run the measurement for statistical significance
             
         Returns:
-            tuple: (time_to_first_token, generated_text)
+            tuple: (avg_time, std_dev, generated_text)
         """
-        # Encode the prompt
+        # Encode the prompt (do this once outside the timing loop)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         input_ids = inputs["input_ids"]
         
-        start_time = time.time()
+        times = []
+        generated_text = None
         
-        past_key_values = None
-        if cpu_kv_cache is not None:
-            if use_compression:
-                # Move compressed KV cache to GPU and decompress
-                gpu_compressed_kv = self.move_to_gpu(cpu_kv_cache)
-                past_key_values = self.decompress_kv_cache(gpu_compressed_kv)
-            else:
-                # Just move the uncompressed KV cache to GPU
-                past_key_values = tuple((k.to(self.device), v.to(self.device)) for k, v in cpu_kv_cache)
-        
-        # Generate first token
-        with torch.no_grad():
-            outputs = self.model(
-                input_ids=input_ids[:, -1:] if past_key_values else input_ids,
-                past_key_values=past_key_values,
-                use_cache=True,
-                return_dict=True
-            )
+        for run in range(num_runs):
+            # Clear CUDA cache between runs for more consistent timing
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
+            start_time = timer()
             
-            next_token = outputs.logits[:, -1, :].argmax(dim=-1).unsqueeze(-1)
-            input_ids = torch.cat([input_ids, next_token], dim=-1)
+            past_key_values = None
+            if cpu_kv_cache is not None:
+                if use_compression:
+                    # Move compressed KV cache to GPU and decompress
+                    gpu_compressed_kv = self.move_to_gpu(cpu_kv_cache)
+                    past_key_values = self.decompress_kv_cache(gpu_compressed_kv)
+                else:
+                    # Just move the uncompressed KV cache to GPU
+                    past_key_values = tuple((k.to(self.device), v.to(self.device)) for k, v in cpu_kv_cache)
+            
+            # Generate first token
+            with torch.no_grad():
+                outputs = self.model(
+                    input_ids=input_ids[:, -1:] if past_key_values else input_ids,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                    return_dict=True
+                )
+                
+                next_token = outputs.logits[:, -1, :].argmax(dim=-1).unsqueeze(-1)
+                current_input_ids = torch.cat([input_ids, next_token], dim=-1)
+            
+            end_time = timer()
+            times.append(end_time - start_time)
+            
+            # Only need to decode the text once
+            if generated_text is None:
+                generated_text = self.tokenizer.decode(current_input_ids[0], skip_special_tokens=True)
         
-        time_to_first_token = time.time() - start_time
-        generated_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+        # Calculate statistics
+        avg_time = statistics.mean(times)
+        std_dev = statistics.stdev(times) if len(times) > 1 else 0.0
         
-        return time_to_first_token, generated_text
+        return avg_time, std_dev, generated_text
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="KV Cache Compression Benchmark")
@@ -251,6 +297,8 @@ if __name__ == "__main__":
     parser.add_argument("--size", type=float, default=1, help="Target KV cache size in MB")
     parser.add_argument("--autoencoder", type=str, help="Path to trained autoencoder")
     parser.add_argument("--latent_dim", type=int, default=16, help="Latent dimension of autoencoder")
+    parser.add_argument("--batch_size", type=int, default=1024, help="Batch size for compression operations")
+    parser.add_argument("--num_runs", type=int, default=5, help="Number of runs for timing statistics")
     parser.add_argument("--output", type=str, default="results.json", help="Output file for results")
     
     args = parser.parse_args()
@@ -259,7 +307,8 @@ if __name__ == "__main__":
     inference = KVCacheInference(
         model_name=args.model,
         autoencoder_path=args.autoencoder,
-        latent_dim=args.latent_dim
+        latent_dim=args.latent_dim,
+        batch_size=args.batch_size
     )
     
     # Generate prompt and KV cache
@@ -275,27 +324,38 @@ if __name__ == "__main__":
     }
     
     # Measure time to first token without compression (baseline)
+    print("\nMeasuring baseline (no compression)...")
     cpu_kv_cache = tuple((k.cpu(), v.cpu()) for k, v in past_key_values)
-    time_baseline, _ = inference.measure_time_to_first_token(
+    time_baseline_avg, time_baseline_std, _ = inference.measure_time_to_first_token(
         generated_text, 
         cpu_kv_cache=cpu_kv_cache, 
-        use_compression=False
+        use_compression=False,
+        num_runs=args.num_runs
     )
-    results["benchmarks"]["baseline"] = time_baseline
+    results["benchmarks"]["baseline"] = {
+        "avg_time": time_baseline_avg,
+        "std_dev": time_baseline_std
+    }
     
     # If autoencoder is provided, measure with compression
     if args.autoencoder:
+        print("\nCompressing KV cache...")
         # Compress KV cache
         compressed_kv = inference.compress_kv_cache(past_key_values)
         cpu_compressed_kv = inference.move_to_cpu(compressed_kv)
         
+        print("\nMeasuring with compression...")
         # Measure time to first token with compression
-        time_compressed, _ = inference.measure_time_to_first_token(
+        time_compressed_avg, time_compressed_std, _ = inference.measure_time_to_first_token(
             generated_text, 
             cpu_kv_cache=cpu_compressed_kv, 
-            use_compression=True
+            use_compression=True,
+            num_runs=args.num_runs
         )
-        results["benchmarks"]["compressed"] = time_compressed
+        results["benchmarks"]["compressed"] = {
+            "avg_time": time_compressed_avg,
+            "std_dev": time_compressed_std
+        }
         
         # Calculate compression ratio
         original_size = sum(k.nelement() * k.element_size() + v.nelement() * v.element_size() 
@@ -309,8 +369,17 @@ if __name__ == "__main__":
     with open(args.output, 'w') as f:
         json.dump(results, f, indent=2)
     
-    print(f"Results saved to {args.output}")
-    print(f"Time to first token (baseline): {time_baseline:.4f}s")
+    print(f"\nResults saved to {args.output}")
+    print(f"Time to first token (baseline): {time_baseline_avg:.4f}s ± {time_baseline_std:.4f}s")
     if args.autoencoder:
-        print(f"Time to first token (compressed): {time_compressed:.4f}s")
+        print(f"Time to first token (compressed): {time_compressed_avg:.4f}s ± {time_compressed_std:.4f}s")
         print(f"Compression ratio: {compression_ratio:.2f}x")
+        
+        # Calculate speedup or slowdown
+        speedup = time_baseline_avg / time_compressed_avg
+        print(f"Speedup factor: {speedup:.2f}x")
+        
+        if speedup > 1.0:
+            print(f"Compression provides {(speedup-1)*100:.1f}% faster time to first token")
+        else:
+            print(f"Compression adds {(1-speedup)*100:.1f}% overhead to time to first token")
