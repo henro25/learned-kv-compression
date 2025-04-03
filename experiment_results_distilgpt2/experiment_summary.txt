@@ -1,0 +1,13 @@
+Experiment Summary
+==================
+Model: distilgpt2
+Latent dimensions tested: [8, 16, 32]
+KV cache sizes tested: [1.0, 10.0, 100.0, 1000.0, 3000.0] MB
+Total runtime: 0h 1m 26.25s
+
+No successful results were produced
+
+Failed dimensions:
+- Latent dim 8: benchmark failed
+- Latent dim 16: benchmark failed
+- Latent dim 32: benchmark failed

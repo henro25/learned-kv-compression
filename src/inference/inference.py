@@ -49,7 +49,7 @@ class KVCacheInference:
         
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.float32,
             device_map={"": self.device}
         )
         
