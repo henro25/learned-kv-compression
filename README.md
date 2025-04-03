@@ -1,68 +1,114 @@
-# learned-kv-compression
-Asymmetric Autoencoders for Learned KV Cache Compression
+# Learned KV Cache Compression
 
-## Overview
+This repository contains code for training and evaluating autoencoder-based compression of key-value (KV) caches for Large Language Models (LLMs).
 
-- **KV Cache Extraction:**  
-  A custom `Buffer` class extracts key and value vectors from a transformer model's caching mechanism. These vectors are then used to train an autoencoder.
+## Project Overview
 
-- **Autoencoder Training:**  
-  The autoencoder is optimized using a mean squared error (MSE) reconstruction loss to compress the KV vectors (for now). Training progress is logged via TensorBoard, and model checkpoints are saved at the end of each epoch.
+When serving LLMs, a significant memory bottleneck is storing and transferring KV caches between CPU and GPU memory, especially for long contexts. This project implements an autoencoder-based compression technique for KV caches to:
 
-- **Dataset:**  
-  The project uses the WikiText-103 dataset to provide input texts for KV cache extraction.
+1. Reduce the memory footprint of KV caches
+2. Speed up the transfer of KV caches between CPU and GPU
+3. Minimize the time to first token when resuming generation from a stored context
 
 ## Installation
 
-1. **Clone the repository:**
-
-    ```bash
-    git clone https://github.com/henro25/learned-kv-compression.git
-    cd learned-kv-compression
-    ```
-
-2. **Create a virtual environment and install dependencies:**
-
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows, use: venv\Scripts\activate
-    pip install -r requirements.txt
-    ```
-
-## Usage
-
-### Training the Autoencoder
-
-Run the training script using the default configuration:
+Clone the repository and install dependencies:
 
 ```bash
-python -m src.dictionary_learning.train
+git clone https://github.com/yourusername/learned-kv-compression.git
+cd learned-kv-compression
+pip install -r requirements.txt
 ```
 
-### Command-Line Overrides
+## Project Structure
 
-The training script accepts command-line arguments to override the default configuration parameters. For example:
+- `src/models/autoencoder.py`: Autoencoder implementation for compressing KV cache vectors
+- `src/utils/buffer.py`: Buffer for extracting KV cache examples from a pre-trained model
+- `src/dictionary_learning/train.py`: Script for training the autoencoder on WikiText data
+- `src/inference/inference.py`: Utilities for inference with compressed KV caches
+- `src/inference/benchmark.py`: Benchmarking script to measure time to first token and other metrics
+- `src/configs/`: Configuration files for different models and experiments
+
+## Training an Autoencoder
+
+To train an autoencoder for KV cache compression:
 
 ```bash
-python -m src.dictionary_learning.train --batch_size 8 --num_epochs 10 --lr 0.001
+python -m src.dictionary_learning.train \
+    --name distilgpt2 \
+    --latent_dim 16 \
+    --num_epochs 10 \
+    --batch_size 32 \
+    --output_dir models/distilgpt2_16 \
+    --num_train_texts 1000
 ```
 
-### Configuration File
+This trains an autoencoder that compresses each KV vector to a 16-dimensional latent representation using 1000 texts from WikiText-103.
 
-The default configuration is loaded from `src/configs/default_config.json`. You can modify this file to change default hyperparameters. Command-line arguments (when provided) override these settings.
+## Running Benchmarks
 
-## Project Details
+After training an autoencoder, you can benchmark its performance with different KV cache sizes:
 
-- **Buffer Module:** The Buffer class in `src/utils/buffer.py` extracts KV pairs from the transformer model. It processes batches of texts, tokenizes them, and extracts key-value vectors from each transformer layer using caching.
-- **Autoencoder Model:** The autoencoder is defined in `src/models/autoencoder.py` and takes as input a KV vector (whose dimension equals the head dimension of the transformer). The model is trained to reconstruct these KV vectors with minimal loss.
-- **Training Script:** The main training logic is in `src/dictionary_learning/train.py`. It loads the dataset, initializes the transformer model, tokenizer, buffer, and autoencoder, and then trains the autoencoder using a cosine annealing learning rate scheduler. Training progress is logged using TensorBoard.
+```bash
+python -m src.inference.benchmark \
+    --model distilgpt2 \
+    --autoencoder models/distilgpt2_16/autoencoder_best.pth \
+    --sizes 1 10 100 1000 3000 \
+    --output results/distilgpt2_16
+```
 
-## Logging and Checkpoints
+This generates KV caches of different sizes (in MB) and measures:
+- Time to first token with and without compression
+- Compression ratio
+- Speedup from using compression
 
-- **TensorBoard:** Training progress and loss metrics are logged to the `runs/` directory. Launch TensorBoard with:
+## Running a Single Inference Test
 
-    ```bash
-    tensorboard --logdir runs
-    ```
+To test a specific KV cache size:
 
-- **Model Checkpoints:** Model checkpoints are saved at the end of each epoch as `autoencoder_epoch_{epoch}.pth`, and the final model is saved as `autoencoder.pth`.
+```bash
+python -m src.inference.inference \
+    --model distilgpt2 \
+    --size 100 \
+    --autoencoder models/distilgpt2_16/autoencoder_best.pth \
+    --output results.json
+```
+
+## Experiment Workflow
+
+The full experimental workflow involves:
+
+1. Training autoencoders with different latent dimensions on WikiText
+2. Running benchmarks with varying KV cache sizes (1KB, 1MB, 100MB, 1GB, 3GB, 10GB, 20GB)
+3. Comparing time to first token with and without compression
+4. Plotting results and analyzing the tradeoff between compression ratio and quality
+
+## Results Visualization
+
+After running benchmarks, visualization files will be saved to the output directory:
+- `time_comparison.png`: Comparison of time to first token with and without compression
+- `compression_ratio.png`: Achieved compression ratio for different cache sizes
+- `speedup.png`: Speedup factor (baseline time / compressed time)
+
+## Future Directions
+
+Possible improvements to explore:
+- Non-linear autoencoders with more layers for better compression
+- Quantization on top of autoencoder compression
+- Per-layer specialized autoencoders to capture layer-specific patterns
+- Pruning techniques to identify and compress only the most important KV vectors
+
+## Citation
+
+If you use this code in your research, please cite:
+
+```
+@misc{huang2025kvcompression,
+  author = {Huang, Henry},
+  title = {Learned KV Cache Compression},
+  year = {2025},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/yourusername/learned-kv-compression}}
+}
+```
