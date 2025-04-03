@@ -52,7 +52,7 @@ def main(cfg):
     torch.manual_seed(SEED)
     np.random.seed(SEED)
     random.seed(SEED)
-    cfg["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    cfg["device"] = str(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     
     # Create output directory
     os.makedirs(cfg["output_dir"], exist_ok=True)
@@ -61,7 +61,7 @@ def main(cfg):
     tokenizer = AutoTokenizer.from_pretrained(cfg["name"])
     model = AutoModelForCausalLM.from_pretrained(
         cfg["name"],
-        torch_dtype=torch.float16,
+        torch_dtype=torch.float32,
         device_map={"": cfg["device"]}  # assign all layers to the chosen device
     )
     if tokenizer.pad_token is None:

@@ -16,4 +16,5 @@
   "output_dir": "test_models/distilgpt2_latent16",
   "num_train_texts": 10,
   "num_eval_texts": 100,
-  "device": 
+  "device": "cuda"
+}
