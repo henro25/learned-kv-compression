@@ -1,0 +1,20 @@
+{
+  "baseline_perplexity": 86.1097813889428,
+  "compressed_perplexity": 21.005988543492737,
+  "longbench_results": {
+    "baseline": {
+      "narrativeqa": 414.4590983085081,
+      "hotpotqa": 272.09670420286955,
+      "2wikimqa": 421.8590950063149,
+      "musique": 212.9349937147038,
+      "dureader": 68.44379086690319
+    },
+    "compressed": {
+      "narrativeqa": 1802.4115778021126,
+      "hotpotqa": 1813.317730110514,
+      "2wikimqa": 2120.0298801942563,
+      "musique": 1382.4884177269053,
+      "dureader": 6473.409374736281
+    }
+  }
+}
