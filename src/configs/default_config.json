@@ -14,5 +14,7 @@
   "eval_interval": 100,
   "max_seq_len": 128,
   "device": "cuda",
-  "output_dir": "results"
+  "output_dir": "models",
+  "num_train_texts": 1000,
+  "num_eval_texts": 100
 }

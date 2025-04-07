@@ -99,6 +99,12 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, device,
                 v_compressed = v_compressed.reshape(values.shape)
                 compressed_cache.append((k_compressed, v_compressed))
             
+            # Create causal mask for next token prediction
+            batch_size = input_ids.size(0)
+            seq_len = input_ids.size(1)
+            causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
+            causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # Add batch and head dimensions
+            
             # Use compressed cache for next token prediction
             next_token_logits = model(
                 input_ids,
