@@ -85,6 +85,12 @@ class KVCacheInference:
         bytes_per_token = 2 * self.num_heads * self.head_dim * 2 * self.num_layers
         target_tokens = int((target_size_mb * 1024 * 1024) / bytes_per_token)
         
+        # Add a maximum sequence length check based on model's context window
+        max_sequence_length = self.model.config.max_position_embeddings
+        if target_tokens > max_sequence_length:
+            print(f"Warning: Target tokens ({target_tokens}) exceeds model's max sequence length ({max_sequence_length})")
+            target_tokens = max_sequence_length
+        
         # Encode the input
         inputs = self.tokenizer(text, return_tensors="pt").to(self.device)
         input_ids = inputs["input_ids"]
@@ -98,31 +104,41 @@ class KVCacheInference:
             past_key_values = None
             pbar = tqdm(total=target_tokens, desc=f"Generating {target_size_mb}MB KV cache")
             
-            while generated_tokens < target_tokens:
-                outputs = self.model(
-                    input_ids=input_ids[:, -1:] if past_key_values else input_ids,
-                    attention_mask=attention_mask,
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                    return_dict=True
-                )
+            try:
+                while generated_tokens < target_tokens:
+                    # Clear CUDA cache periodically to prevent OOM
+                    if generated_tokens % 100 == 0:
+                        torch.cuda.empty_cache()
+                    
+                    outputs = self.model(
+                        input_ids=input_ids[:, -1:] if past_key_values else input_ids,
+                        attention_mask=attention_mask,
+                        past_key_values=past_key_values,
+                        use_cache=True,
+                        return_dict=True
+                    )
+                    
+                    past_key_values = outputs.past_key_values
+                    next_token = outputs.logits[:, -1, :].argmax(dim=-1)
+                    
+                    # Append to input_ids and attention_mask
+                    input_ids = torch.cat([input_ids, next_token.unsqueeze(-1)], dim=-1)
+                    attention_mask = torch.cat([attention_mask, torch.ones_like(next_token.unsqueeze(-1))], dim=-1)
+                    generated_tokens += 1
+                    
+                    # Update progress bar every 10 tokens
+                    if generated_tokens % 10 == 0:
+                        pbar.update(10)
+                        # Decode the new text
+                        new_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+                        generated_text = new_text
                 
-                past_key_values = outputs.past_key_values
-                next_token = outputs.logits[:, -1, :].argmax(dim=-1)
-                
-                # Append to input_ids and attention_mask
-                input_ids = torch.cat([input_ids, next_token.unsqueeze(-1)], dim=-1)
-                attention_mask = torch.cat([attention_mask, torch.ones_like(next_token.unsqueeze(-1))], dim=-1)
-                generated_tokens += 1
-                
-                # Update progress bar every 10 tokens
-                if generated_tokens % 10 == 0:
-                    pbar.update(10)
-                    # Decode the new text
-                    new_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
-                    generated_text = new_text
-            
-            pbar.close()
+                pbar.close()
+            except RuntimeError as e:
+                if "CUDA out of memory" in str(e):
+                    print(f"Warning: CUDA OOM at {generated_tokens} tokens. Using partial KV cache.")
+                else:
+                    raise e
         
         # Calculate actual size of the KV cache
         actual_size_mb = (generated_tokens * bytes_per_token) / (1024 * 1024)
