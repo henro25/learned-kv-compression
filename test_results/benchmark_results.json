@@ -1,6 +1,6 @@
 {
   "model": "distilgpt2",
-  "autoencoder": "test_models/distilgpt2_latent16/autoencoder_best.pth",
+  "autoencoder": "test_models/distilgpt2_latent16/autoencoder_final.pth",
   "latent_dim": 16,
   "batch_size": 512,
   "num_runs": 3,

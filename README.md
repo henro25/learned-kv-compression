@@ -52,7 +52,7 @@ After training an autoencoder, you can benchmark its performance with different 
 ```bash
 python -m src.inference.benchmark \
     --model distilgpt2 \
-    --autoencoder models/distilgpt2_16/autoencoder_best.pth \
+    --autoencoder models/distilgpt2_16/autoencoder_final.pth \
     --sizes 1 10 100 1000 3000 \
     --output results/distilgpt2_16
 ```
@@ -70,7 +70,7 @@ To test a specific KV cache size:
 python -m src.inference.inference \
     --model distilgpt2 \
     --size 100 \
-    --autoencoder models/distilgpt2_16/autoencoder_best.pth \
+    --autoencoder models/distilgpt2_16/autoencoder_final.pth \
     --output results.json
 ```
 

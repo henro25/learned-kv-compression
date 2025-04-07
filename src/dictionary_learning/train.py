@@ -169,7 +169,7 @@ def main(cfg):
                 # Save the best model based on evaluation loss
                 if avg_eval_loss < best_eval_loss:
                     best_eval_loss = avg_eval_loss
-                    best_model_path = os.path.join(cfg["output_dir"], "autoencoder_best.pth")
+                    best_model_path = os.path.join(cfg["output_dir"], "autoencoder_final.pth")
                     torch.save(autoencoder.state_dict(), best_model_path)
                     print(f"New best model saved at {best_model_path}")
 

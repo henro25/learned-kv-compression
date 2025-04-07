@@ -85,6 +85,12 @@ class KVCacheInference:
         bytes_per_token = 2 * self.num_heads * self.head_dim * 2 * self.num_layers
         target_tokens = int((target_size_mb * 1024 * 1024) / bytes_per_token)
         
+        # Add a maximum sequence length check based on model's context window
+        max_sequence_length = self.model.config.max_position_embeddings
+        if target_tokens > max_sequence_length:
+            print(f"Warning: Target tokens ({target_tokens}) exceeds model's max sequence length ({max_sequence_length})")
+            target_tokens = max_sequence_length
+        
         # Encode the input
         inputs = self.tokenizer(text, return_tensors="pt").to(self.device)
         input_ids = inputs["input_ids"]
