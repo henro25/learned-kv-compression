@@ -34,14 +34,14 @@ Starting experiment at Wed Apr  2 22:11:37 EDT 2025
 2025-04-02 22:11:38,974 [INFO] ================================================================================
 2025-04-02 22:11:38,974 [INFO] Running: python -m src.dictionary_learning.train --name distilgpt2 --latent_dim 8 --num_epochs 5 --num_train_texts 1000 --output_dir experiment_results_distilgpt2/distilgpt2_latent8
 2025-04-02 22:11:59,844 [INFO] Command completed successfully
-2025-04-02 22:11:59,845 [INFO] Autoencoder trained and saved to experiment_results_distilgpt2/distilgpt2_latent8/autoencoder_best.pth
+2025-04-02 22:11:59,845 [INFO] Autoencoder trained and saved to experiment_results_distilgpt2/distilgpt2_latent8/autoencoder_final.pth
 2025-04-02 22:11:59,846 [INFO] CUDA cache cleared
 2025-04-02 22:11:59,876 [INFO] Garbage collector run
 2025-04-02 22:11:59,876 [INFO] 
 ================================================================================
 2025-04-02 22:11:59,876 [INFO] Running benchmark with latent_dim=8
 2025-04-02 22:11:59,876 [INFO] ================================================================================
-2025-04-02 22:11:59,876 [INFO] Running: python -m src.inference.benchmark --model distilgpt2 --autoencoder experiment_results_distilgpt2/distilgpt2_latent8/autoencoder_best.pth --latent_dim 8 --batch_size 1024 --num_runs 5 --max_token_chunk 128 --sizes 1.0 10.0 100.0 1000.0 3000.0 --output experiment_results_distilgpt2/benchmark_distilgpt2_latent8
+2025-04-02 22:11:59,876 [INFO] Running: python -m src.inference.benchmark --model distilgpt2 --autoencoder experiment_results_distilgpt2/distilgpt2_latent8/autoencoder_final.pth --latent_dim 8 --batch_size 1024 --num_runs 5 --max_token_chunk 128 --sizes 1.0 10.0 100.0 1000.0 3000.0 --output experiment_results_distilgpt2/benchmark_distilgpt2_latent8
 2025-04-02 22:12:04,435 [ERROR] Command failed with exit code 1
 2025-04-02 22:12:04,435 [ERROR] STDOUT: 
 2025-04-02 22:12:04,435 [ERROR] STDERR: Traceback (most recent call last):
@@ -66,14 +66,14 @@ ImportError: cannot import name 'compress_kv_cache' from 'src.inference.inferenc
 2025-04-02 22:12:06,470 [INFO] ================================================================================
 2025-04-02 22:12:06,470 [INFO] Running: python -m src.dictionary_learning.train --name distilgpt2 --latent_dim 16 --num_epochs 5 --num_train_texts 1000 --output_dir experiment_results_distilgpt2/distilgpt2_latent16
 2025-04-02 22:12:27,280 [INFO] Command completed successfully
-2025-04-02 22:12:27,282 [INFO] Autoencoder trained and saved to experiment_results_distilgpt2/distilgpt2_latent16/autoencoder_best.pth
+2025-04-02 22:12:27,282 [INFO] Autoencoder trained and saved to experiment_results_distilgpt2/distilgpt2_latent16/autoencoder_final.pth
 2025-04-02 22:12:27,282 [INFO] CUDA cache cleared
 2025-04-02 22:12:27,307 [INFO] Garbage collector run
 2025-04-02 22:12:27,307 [INFO] 
 ================================================================================
 2025-04-02 22:12:27,308 [INFO] Running benchmark with latent_dim=16
 2025-04-02 22:12:27,308 [INFO] ================================================================================
-2025-04-02 22:12:27,308 [INFO] Running: python -m src.inference.benchmark --model distilgpt2 --autoencoder experiment_results_distilgpt2/distilgpt2_latent16/autoencoder_best.pth --latent_dim 16 --batch_size 1024 --num_runs 5 --max_token_chunk 128 --sizes 1.0 10.0 100.0 1000.0 3000.0 --output experiment_results_distilgpt2/benchmark_distilgpt2_latent16
+2025-04-02 22:12:27,308 [INFO] Running: python -m src.inference.benchmark --model distilgpt2 --autoencoder experiment_results_distilgpt2/distilgpt2_latent16/autoencoder_final.pth --latent_dim 16 --batch_size 1024 --num_runs 5 --max_token_chunk 128 --sizes 1.0 10.0 100.0 1000.0 3000.0 --output experiment_results_distilgpt2/benchmark_distilgpt2_latent16
 2025-04-02 22:12:31,848 [ERROR] Command failed with exit code 1
 2025-04-02 22:12:31,848 [ERROR] STDOUT: 
 2025-04-02 22:12:31,848 [ERROR] STDERR: Traceback (most recent call last):
@@ -98,14 +98,14 @@ ImportError: cannot import name 'compress_kv_cache' from 'src.inference.inferenc
 2025-04-02 22:12:33,882 [INFO] ================================================================================
 2025-04-02 22:12:33,882 [INFO] Running: python -m src.dictionary_learning.train --name distilgpt2 --latent_dim 32 --num_epochs 5 --num_train_texts 1000 --output_dir experiment_results_distilgpt2/distilgpt2_latent32
 2025-04-02 22:12:57,093 [INFO] Command completed successfully
-2025-04-02 22:12:57,095 [INFO] Autoencoder trained and saved to experiment_results_distilgpt2/distilgpt2_latent32/autoencoder_best.pth
+2025-04-02 22:12:57,095 [INFO] Autoencoder trained and saved to experiment_results_distilgpt2/distilgpt2_latent32/autoencoder_final.pth
 2025-04-02 22:12:57,095 [INFO] CUDA cache cleared
 2025-04-02 22:12:57,120 [INFO] Garbage collector run
 2025-04-02 22:12:57,121 [INFO] 
 ================================================================================
 2025-04-02 22:12:57,121 [INFO] Running benchmark with latent_dim=32
 2025-04-02 22:12:57,121 [INFO] ================================================================================
-2025-04-02 22:12:57,121 [INFO] Running: python -m src.inference.benchmark --model distilgpt2 --autoencoder experiment_results_distilgpt2/distilgpt2_latent32/autoencoder_best.pth --latent_dim 32 --batch_size 1024 --num_runs 5 --max_token_chunk 128 --sizes 1.0 10.0 100.0 1000.0 3000.0 --output experiment_results_distilgpt2/benchmark_distilgpt2_latent32
+2025-04-02 22:12:57,121 [INFO] Running: python -m src.inference.benchmark --model distilgpt2 --autoencoder experiment_results_distilgpt2/distilgpt2_latent32/autoencoder_final.pth --latent_dim 32 --batch_size 1024 --num_runs 5 --max_token_chunk 128 --sizes 1.0 10.0 100.0 1000.0 3000.0 --output experiment_results_distilgpt2/benchmark_distilgpt2_latent32
 2025-04-02 22:13:01,688 [ERROR] Command failed with exit code 1
 2025-04-02 22:13:01,688 [ERROR] STDOUT: 
 2025-04-02 22:13:01,688 [ERROR] STDERR: Traceback (most recent call last):

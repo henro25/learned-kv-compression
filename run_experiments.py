@@ -60,7 +60,7 @@ def train_autoencoder(model_name, latent_dim, num_epochs, num_train_texts, outpu
     
     subprocess.run(cmd)
     
-    return os.path.join(model_dir, "autoencoder_best.pth")
+    return os.path.join(model_dir, "autoencoder_final.pth")
 
 def run_benchmark(model_name, autoencoder_path, latent_dim, cache_sizes, batch_size, num_runs, output_dir):
     """Run benchmarks with the trained autoencoder"""
@@ -111,7 +111,7 @@ def main():
         else:
             # Use existing model if skipping training
             model_dir = os.path.join(args.output_dir, f"{args.model}_latent{latent_dim}")
-            model_path = os.path.join(model_dir, "autoencoder_best.pth")
+            model_path = os.path.join(model_dir, "autoencoder_final.pth")
             if not os.path.exists(model_path):
                 print(f"Warning: Model {model_path} not found. Skipping latent_dim={latent_dim}.")
                 continue

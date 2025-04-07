@@ -40,7 +40,7 @@ python -m src.dictionary_learning.train \
 echo "Step 2: Running benchmark test..."
 python -m src.inference.benchmark \
     --model $MODEL \
-    --autoencoder "${TEST_MODEL_DIR}/autoencoder_best.pth" \
+    --autoencoder "${TEST_MODEL_DIR}/autoencoder_final.pth" \
     --latent_dim $LATENT_DIM \
     --batch_size $BATCH_SIZE \
     --num_runs $NUM_RUNS \
