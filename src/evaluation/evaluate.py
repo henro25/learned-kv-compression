@@ -195,6 +195,9 @@ def main(cfg):
     # Set device
     device = torch.device(cfg["device"])
     
+    # Create output directory if it doesn't exist
+    os.makedirs(cfg["output_dir"], exist_ok=True)
+    
     # Load model and tokenizer
     tokenizer = AutoTokenizer.from_pretrained(cfg["name"])
     model = AutoModelForCausalLM.from_pretrained(
@@ -206,13 +209,31 @@ def main(cfg):
         use_cache=True
     )
     
-    # Load trained autoencoder
-    autoencoder = Autoencoder(input_dim=cfg["head_dim"], latent_dim=cfg["latent_dim"]).to(device)
-    autoencoder.load_state_dict(torch.load(os.path.join(cfg["output_dir"], "autoencoder_final.pth")))
+    # Check if autoencoder model exists
+    autoencoder_path = os.path.join(cfg["output_dir"], "autoencoder_final.pth")
+    if not os.path.exists(autoencoder_path):
+        print(f"Error: Autoencoder model not found at {autoencoder_path}")
+        print("Please run the training script first to train the autoencoder:")
+        print(f"python src/dictionary_learning/train.py --config {os.path.abspath('src/configs/default_config.json')}")
+        return
+    
+    try:
+        # Load trained autoencoder
+        autoencoder = Autoencoder(input_dim=cfg["head_dim"], latent_dim=cfg["latent_dim"]).to(device)
+        autoencoder.load_state_dict(torch.load(autoencoder_path))
+        print(f"Successfully loaded autoencoder from {autoencoder_path}")
+    except Exception as e:
+        print(f"Error loading autoencoder: {str(e)}")
+        return
     
     # Load evaluation texts
-    dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
-    eval_texts = [text for text in dataset["test"]["text"] if text.strip()][:cfg["num_eval_texts"]]
+    try:
+        dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
+        eval_texts = [text for text in dataset["test"]["text"] if text.strip()][:cfg["num_eval_texts"]]
+        print(f"Loaded {len(eval_texts)} evaluation texts")
+    except Exception as e:
+        print(f"Error loading evaluation dataset: {str(e)}")
+        return
     
     # Calculate perplexity
     print("\nCalculating baseline perplexity...")
@@ -230,6 +251,7 @@ def main(cfg):
     # Plot results
     plot_path = os.path.join(cfg["output_dir"], "perplexity_comparison.png")
     plot_perplexity_comparison(longbench_results, plot_path)
+    print(f"Saved perplexity comparison plot to {plot_path}")
     
     # Save results
     results = {
@@ -238,11 +260,14 @@ def main(cfg):
         "longbench_results": longbench_results
     }
     
-    with open(os.path.join(cfg["output_dir"], "evaluation_results.json"), "w") as f:
+    results_path = os.path.join(cfg["output_dir"], "evaluation_results.json")
+    with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
     
     print("\nEvaluation complete!")
     print(f"Results saved in {cfg['output_dir']}")
+    print(f"- Evaluation results: {results_path}")
+    print(f"- Perplexity comparison plot: {plot_path}")
 
 if __name__ == "__main__":
     import argparse

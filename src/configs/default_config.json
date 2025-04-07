@@ -12,5 +12,7 @@
   "lm_batch_size": 1,
   "num_key_value_heads": 12,
   "eval_interval": 100,
-  "max_seq_len": 128
+  "max_seq_len": 128,
+  "device": "cuda",
+  "output_dir": "results"
 }
