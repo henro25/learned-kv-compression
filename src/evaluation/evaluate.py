@@ -102,8 +102,12 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, device,
             # Create causal mask for next token prediction
             batch_size = input_ids.size(0)
             seq_len = input_ids.size(1)
+            num_heads = model.config.n_head  # Get actual number of attention heads from model
+            
+            # Create causal mask
             causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
             causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # Add batch and head dimensions
+            causal_mask = causal_mask.expand(batch_size, num_heads, -1, -1)  # Expand to match batch and head dimensions
             
             # Use compressed cache for next token prediction
             next_token_logits = model(
@@ -216,7 +220,7 @@ def main(cfg):
     )
     
     # Check if autoencoder model exists
-    autoencoder_path = os.path.join(cfg["output_dir"], "autoencoder_final.pth")
+    autoencoder_path = os.path.join(cfg["output_dir"] + "/" + cfg["name"], "autoencoder_final.pth")
     if not os.path.exists(autoencoder_path):
         print(f"Error: Autoencoder model not found at {autoencoder_path}")
         print("Please run the training script first to train the autoencoder:")
