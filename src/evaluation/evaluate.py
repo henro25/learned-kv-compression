@@ -99,31 +99,27 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, device,
                 v_compressed = v_compressed.reshape(values.shape)
                 compressed_cache.append((k_compressed, v_compressed))
             
-            # Create causal mask for next token prediction
-            batch_size = input_ids.size(0)
-            seq_len = input_ids.size(1)
-            num_heads = model.config.n_head  # Get actual number of attention heads from model
-            
-            # Create causal mask
-            causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
-            causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # Add batch and head dimensions
-            causal_mask = causal_mask.expand(batch_size, num_heads, -1, -1)  # Expand to match batch and head dimensions
-            
             # Use compressed cache for next token prediction
+            # Create a new attention mask for the next token prediction
+            next_token_mask = torch.ones((1, 1), device=device)  # Shape: (batch_size=1, seq_len=1)
+            
+            # Forward pass with compressed cache
             next_token_logits = model(
-                input_ids,
-                attention_mask=attention_mask,
+                input_ids=input_ids[:, -1:],  # Only use the last token
+                attention_mask=next_token_mask,
                 past_key_values=compressed_cache,
                 return_dict=True
             ).logits
             
             # Calculate loss
-            shift_logits = next_token_logits[..., :-1, :].contiguous()
-            shift_labels = input_ids[..., 1:].contiguous()
-            loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            # We only need to compare the predicted next token with the actual next token
+            loss = F.cross_entropy(
+                next_token_logits.view(-1, next_token_logits.size(-1)),  # Flatten logits
+                input_ids[:, -1].view(-1)  # Target is the last token
+            )
             
-            total_loss += loss.item() * (input_ids.size(1) - 1)
-            total_tokens += (input_ids.size(1) - 1)
+            total_loss += loss.item()
+            total_tokens += 1  # We're predicting one token at a time
     
     # Calculate average perplexity
     avg_loss = total_loss / total_tokens
@@ -144,8 +140,14 @@ def evaluate_longbench(model, tokenizer, autoencoder, device, cfg):
     Returns:
         dict: Evaluation results
     """
-    # Load LongBench dataset
-    dataset = load_dataset("THUDM/LongBench")
+    # Define the LongBench subsets to evaluate
+    longbench_subsets = [
+        'narrativeqa',
+        'hotpotqa',
+        '2wikimqa',
+        'musique',
+        'dureader'
+    ]
     
     results = {
         "baseline": {},
@@ -153,19 +155,26 @@ def evaluate_longbench(model, tokenizer, autoencoder, device, cfg):
     }
     
     # Evaluate on each subset
-    for subset in ["narrative_qa", "hotpotqa", "2wikimqa", "musique", "dureader"]:
+    for subset in longbench_subsets:
         print(f"\nEvaluating on {subset}...")
-        texts = dataset[subset]["input"]
-        
-        # Calculate baseline perplexity
-        baseline_ppl = calculate_perplexity(model, tokenizer, texts, device)
-        results["baseline"][subset] = baseline_ppl
-        
-        # Calculate perplexity with compressed cache
-        compressed_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, device, cfg)
-        results["compressed"][subset] = compressed_ppl
-        
-        print(f"{subset} - Baseline PPL: {baseline_ppl:.2f}, Compressed PPL: {compressed_ppl:.2f}")
+        try:
+            # Load the specific subset
+            dataset = load_dataset("THUDM/LongBench", subset)
+            texts = dataset["test"]["input"]
+            
+            # Calculate baseline perplexity
+            baseline_ppl = calculate_perplexity(model, tokenizer, texts, device)
+            results["baseline"][subset] = baseline_ppl
+            
+            # Calculate perplexity with compressed cache
+            compressed_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, device, cfg)
+            results["compressed"][subset] = compressed_ppl
+            
+            print(f"{subset} - Baseline PPL: {baseline_ppl:.2f}, Compressed PPL: {compressed_ppl:.2f}")
+        except Exception as e:
+            print(f"Error evaluating {subset}: {str(e)}")
+            results["baseline"][subset] = None
+            results["compressed"][subset] = None
     
     return results
 
@@ -220,7 +229,7 @@ def main(cfg):
     )
     
     # Check if autoencoder model exists
-    autoencoder_path = os.path.join(cfg["output_dir"] + "/" + cfg["name"], "autoencoder_final.pth")
+    autoencoder_path = os.path.join(cfg["output_dir"] + "/" + cfg["name"] + "_" + str(cfg["latent_dim"]), "autoencoder_final.pth")
     if not os.path.exists(autoencoder_path):
         print(f"Error: Autoencoder model not found at {autoencoder_path}")
         print("Please run the training script first to train the autoencoder:")
