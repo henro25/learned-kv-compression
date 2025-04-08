@@ -169,7 +169,6 @@ def main():
             output_dir=args.output_dir,
             cfg=cfg
         )
-        
         model_results.append((latent_dim, result_dir))
     
     # Calculate total runtime
