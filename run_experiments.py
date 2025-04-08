@@ -54,6 +54,8 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
     model_dir = os.path.join(output_dir, f"{model_name}_latent{latent_dim}")
     os.makedirs(model_dir, exist_ok=True)
     
+    print("MODEL DIR: ", model_dir)
+    
     # Update config with training parameters
     train_cfg = cfg.copy()
     train_cfg.update({
@@ -70,7 +72,8 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
     
     cmd = [
         "python", "-m", "src.dictionary_learning.train",
-        "--config", config_path
+        "--config", config_path,
+        "output_dir", model_dir
     ]
     
     print(f"\n{'='*80}")
@@ -140,6 +143,9 @@ def main():
     model_results = []
     
     for latent_dim in args.latent_dims:
+        
+        print("Output directory for training is: ", args.output_dir)
+        
         # Train autoencoder (unless skipped)
         if not args.skip_training:
             model_path = train_autoencoder(
