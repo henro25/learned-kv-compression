@@ -29,7 +29,7 @@ def parse_args():
                         help="KV cache sizes in MB to test")
     parser.add_argument("--num_epochs", type=int, default=5, 
                         help="Number of epochs for training")
-    parser.add_argument("--num_train_texts", type=int, default=10000, 
+    parser.add_argument("--num_train_texts", type=int, default=100, 
                         help="Number of training texts to use")
     parser.add_argument("--batch_size", type=int, default=64,
                         help="Batch size for compression operations")
