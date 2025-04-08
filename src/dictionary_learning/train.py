@@ -48,7 +48,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, help="Random seed")
     parser.add_argument("--lr", type=float, help="Learning rate")
     parser.add_argument("--output_dir", type=str, default="models", help="Directory to save models")
-    parser.add_argument("--num_train_texts", type=int, default=1000, help="Number of training texts to use")
+    parser.add_argument("--num_train_texts", type=int, default=10000, help="Number of training texts to use")
     parser.add_argument("--num_eval_texts", type=int, default=100, help="Number of evaluation texts to use")
     return vars(parser.parse_args())
 
