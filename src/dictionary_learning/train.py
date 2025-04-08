@@ -154,11 +154,6 @@ def main(cfg):
     os.makedirs(cfg["output_dir"], exist_ok=True)
     os.makedirs(os.path.join(cfg["output_dir"], "attention_viz"), exist_ok=True)
     
-    # print all config 
-    print("Configuration:")
-    for key, value in cfg.items():
-        print(f"{key}: {value}")
-    
     # Load the pretrained model and tokenizer.
     tokenizer = AutoTokenizer.from_pretrained(cfg["name"])
     model = AutoModelForCausalLM.from_pretrained(
