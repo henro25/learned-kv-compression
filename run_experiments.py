@@ -152,8 +152,7 @@ def main():
             )
         else:
             # Use existing model if skipping training
-            model_dir = os.path.join(args.output_dir, f"{args.model}_latent{latent_dim}")
-            model_path = os.path.join(model_dir, "autoencoder_final.pth")
+            model_path = os.path.join(args.output_dir, "autoencoder_final.pth")
             if not os.path.exists(model_path):
                 print(f"Warning: Model {model_path} not found. Skipping latent_dim={latent_dim}.")
                 continue

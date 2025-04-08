@@ -64,7 +64,7 @@ mkdir -p $OUTPUT_DIR/comparison
 # Collect results directories for all latent dimensions
 RESULT_DIRS=""
 for latent_dim in $LATENT_DIMS; do
-    RESULT_DIRS="$RESULT_DIRS $OUTPUT_DIR"
+    RESULT_DIRS="$RESULT_DIRS $OUTPUT_DIR/benchmark_${MODEL}_latent${latent_dim}"
 done
 
 # Run comparison
