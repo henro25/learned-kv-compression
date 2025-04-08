@@ -73,9 +73,9 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
     cmd = [
         "python", "-m", "src.dictionary_learning.train",
         "--config", config_path,
-        "--latent_dim", latent_dim,
-        "--num_epochs", num_epochs,
-        "--num_train_texts", num_train_texts,
+        "--latent_dim", str(latent_dim),
+        "--num_epochs", str(num_epochs),
+        "--num_train_texts", str(num_train_texts),
         "--output_dir", model_dir
     ]
     
