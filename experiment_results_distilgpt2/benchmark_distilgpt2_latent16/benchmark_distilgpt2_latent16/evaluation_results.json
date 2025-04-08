@@ -1,6 +1,6 @@
 {
   "baseline_perplexity": 78.16070556640625,
-  "compressed_perplexity": 132631.90625,
+  "compressed_perplexity": 199864.078125,
   "longbench_results": {
     "baseline": {
       "narrativeqa": 405.4547119140625,
@@ -10,17 +10,17 @@
       "dureader": 68.05569458007812
     },
     "compressed": {
-      "narrativeqa": 2289.621337890625,
-      "hotpotqa": 1848.7269287109375,
-      "2wikimqa": 2179.031982421875,
-      "musique": 1040.8341064453125,
-      "dureader": 2426.2236328125
+      "narrativeqa": 1683.1871337890625,
+      "hotpotqa": 1297.14013671875,
+      "2wikimqa": 1295.809814453125,
+      "musique": 749.3319702148438,
+      "dureader": 1272.390869140625
     }
   },
   "config": {
     "name": "distilgpt2",
     "input_dim": 64,
-    "latent_dim": 8,
+    "latent_dim": 16,
     "batch_size": 64,
     "num_epochs": 10,
     "lr": 0.0001,
