@@ -14,7 +14,9 @@ import os
 import argparse
 import subprocess
 import time
+import json
 from pathlib import Path
+from typing import List, Dict, Any
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run KV Cache Compression Experiments")
@@ -37,20 +39,38 @@ def parse_args():
                         help="Skip training and use existing models")
     parser.add_argument("--output_dir", type=str, default="experiment_results",
                         help="Directory to save results")
+    parser.add_argument("--config", type=str, default="src/configs/default_config.json",
+                        help="Path to config file")
     return parser.parse_args()
 
-def train_autoencoder(model_name, latent_dim, num_epochs, num_train_texts, output_dir):
-    """Train an autoencoder with the specified parameters"""
+def load_config(config_path: str) -> Dict[str, Any]:
+    """Load configuration from JSON file."""
+    with open(config_path, "r") as f:
+        return json.load(f)
+
+def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int, 
+                     num_train_texts: int, output_dir: str, cfg: Dict[str, Any]) -> str:
+    """Train an autoencoder with the specified parameters."""
     model_dir = os.path.join(output_dir, f"{model_name}_latent{latent_dim}")
     os.makedirs(model_dir, exist_ok=True)
     
+    # Update config with training parameters
+    train_cfg = cfg.copy()
+    train_cfg.update({
+        "latent_dim": latent_dim,
+        "num_epochs": num_epochs,
+        "num_train_texts": num_train_texts,
+        "output_dir": model_dir
+    })
+    
+    # Save updated config
+    config_path = os.path.join(model_dir, "train_config.json")
+    with open(config_path, "w") as f:
+        json.dump(train_cfg, f, indent=2)
+    
     cmd = [
         "python", "-m", "src.dictionary_learning.train",
-        "--name", model_name,
-        "--latent_dim", str(latent_dim),
-        "--num_epochs", str(num_epochs),
-        "--num_train_texts", str(num_train_texts),
-        "--output_dir", model_dir
+        "--config", config_path
     ]
     
     print(f"\n{'='*80}")
@@ -62,21 +82,39 @@ def train_autoencoder(model_name, latent_dim, num_epochs, num_train_texts, outpu
     
     return os.path.join(model_dir, "autoencoder_final.pth")
 
-def run_benchmark(model_name, autoencoder_path, latent_dim, cache_sizes, batch_size, num_runs, output_dir):
-    """Run benchmarks with the trained autoencoder"""
+def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int, 
+                 cache_sizes: List[float], batch_size: int, num_runs: int, 
+                 output_dir: str, cfg: Dict[str, Any]) -> str:
+    """Run benchmarks with the trained autoencoder."""
     result_dir = os.path.join(output_dir, f"benchmark_{model_name}_latent{latent_dim}")
     os.makedirs(result_dir, exist_ok=True)
+    
+    # Update config with benchmark parameters
+    benchmark_cfg = cfg.copy()
+    benchmark_cfg.update({
+        "model_name": model_name,
+        "latent_dim": latent_dim,
+        "batch_size": batch_size,
+        "num_runs": num_runs,
+        "cache_sizes": cache_sizes
+    })
+    
+    # Save updated config
+    config_path = os.path.join(result_dir, "benchmark_config.json")
+    with open(config_path, "w") as f:
+        json.dump(benchmark_cfg, f, indent=2)
     
     cmd = [
         "python", "-m", "src.inference.benchmark",
         "--model", model_name,
         "--autoencoder", autoencoder_path,
         "--latent_dim", str(latent_dim),
+        "--cache_sizes"
+    ] + [str(s) for s in cache_sizes] + [
         "--batch_size", str(batch_size),
         "--num_runs", str(num_runs),
-        "--sizes"
-    ] + [str(s) for s in cache_sizes] + [
-        "--output", result_dir
+        "--output", result_dir,
+        "--config", config_path
     ]
     
     print(f"\n{'='*80}")
@@ -92,6 +130,9 @@ def main():
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     
+    # Load base configuration
+    cfg = load_config(args.config)
+    
     # Record experiment start time
     start_time = time.time()
     
@@ -106,7 +147,8 @@ def main():
                 latent_dim=latent_dim,
                 num_epochs=args.num_epochs,
                 num_train_texts=args.num_train_texts,
-                output_dir=args.output_dir
+                output_dir=args.output_dir,
+                cfg=cfg
             )
         else:
             # Use existing model if skipping training
@@ -124,9 +166,9 @@ def main():
             cache_sizes=args.cache_sizes,
             batch_size=args.batch_size,
             num_runs=args.num_runs,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
+            cfg=cfg
         )
-        
         model_results.append((latent_dim, result_dir))
     
     # Calculate total runtime

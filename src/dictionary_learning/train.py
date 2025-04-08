@@ -175,13 +175,41 @@ def main(cfg):
     writer = SummaryWriter(log_dir=f'runs/{cfg["name"]}_{cfg["latent_dim"]}')
 
     # Load WikiText dataset via Hugging Face datasets.
-    dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
+    wiki_dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
     
-    # Filter out empty texts and take a subset for training and evaluation
-    texts_train = [text for text in dataset["train"]["text"] if text.strip()][:cfg["num_train_texts"]]
-    texts_test = [text for text in dataset["test"]["text"] if text.strip()][:cfg["num_eval_texts"]]
+    # Load LongBench datasets
+    longbench_subsets = ['narrativeqa', 'hotpotqa', '2wikimqa', 'musique', 'dureader']
+    longbench_texts = []
+    for subset in longbench_subsets:
+        try:
+            dataset = load_dataset("THUDM/LongBench", subset)
+            texts = dataset["test"]["input"]
+            longbench_texts.extend(texts)
+        except Exception as e:
+            print(f"Warning: Could not load {subset}: {str(e)}")
+    
+    # Filter out empty texts and prepare training data
+    wiki_train = [text for text in wiki_dataset["train"]["text"] if text.strip()]
+    longbench_train = [text for text in longbench_texts if text.strip()]
+    
+    # Calculate how many texts to take from each dataset
+    num_wiki = int(cfg["num_train_texts"] * 0.7)  # 70% from WikiText
+    num_longbench = cfg["num_train_texts"] - num_wiki  # 30% from LongBench
+    
+    # Randomly sample from each dataset
+    wiki_train = random.sample(wiki_train, min(num_wiki, len(wiki_train)))
+    longbench_train = random.sample(longbench_train, min(num_longbench, len(longbench_train)))
+    
+    # Combine and shuffle the training data
+    texts_train = wiki_train + longbench_train
+    random.shuffle(texts_train)
+    
+    texts_test = [text for text in wiki_dataset["test"]["text"] if text.strip()][:cfg["num_eval_texts"]]
+    texts_test.extend(longbench_texts[cfg["num_train_texts"]:cfg["num_train_texts"] + cfg["num_eval_texts"]])  # Add LongBench texts
     
     print(f"Using {len(texts_train)} texts for training and {len(texts_test)} texts for evaluation")
+    print(f"Training data includes {len(texts_train) - cfg['num_train_texts']} LongBench texts")
+    print(f"Evaluation data includes {len(texts_test) - cfg['num_eval_texts']} LongBench texts")
 
     # Initialize Buffers for training and evaluation.
     train_buffer = Buffer(cfg, model, tokenizer, texts_train)

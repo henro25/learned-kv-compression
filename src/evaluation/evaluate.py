@@ -9,8 +9,9 @@ import json
 import os
 from src.models.autoencoder import Autoencoder
 from src.utils.buffer import Buffer
+import torch.nn as nn
 
-def calculate_perplexity(model, tokenizer, texts, device, max_length=2048):
+def calculate_perplexity(model, tokenizer, texts, max_length=1024):
     """
     Calculate perplexity for a list of texts.
     
@@ -18,7 +19,6 @@ def calculate_perplexity(model, tokenizer, texts, device, max_length=2048):
         model: The language model
         tokenizer: The tokenizer
         texts: List of texts to evaluate
-        device: Device to run on
         max_length: Maximum sequence length
         
     Returns:
@@ -30,25 +30,48 @@ def calculate_perplexity(model, tokenizer, texts, device, max_length=2048):
     
     with torch.no_grad():
         for text in tqdm(texts, desc="Calculating perplexity"):
-            # Tokenize the text
+            # Tokenize and prepare input
             inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_length)
-            input_ids = inputs["input_ids"].to(device)
-            attention_mask = inputs["attention_mask"].to(device)
+            input_ids = inputs["input_ids"].to(model.device)
+            attention_mask = inputs["attention_mask"].to(model.device)
             
             # Get model outputs
-            outputs = model(input_ids, attention_mask=attention_mask, labels=input_ids)
-            loss = outputs.loss
+            outputs = model(input_ids, attention_mask=attention_mask)
+            logits = outputs.logits
             
-            # Accumulate loss and token count
-            total_loss += loss.item() * input_ids.size(1)
-            total_tokens += input_ids.size(1)
+            # Calculate loss for each token
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = input_ids[..., 1:].contiguous()
+            loss_fct = nn.CrossEntropyLoss(reduction='none')
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            
+            # Mask out padding tokens
+            mask = attention_mask[..., 1:].contiguous().view(-1)
+            loss = loss * mask
+            
+            total_loss += loss.sum().item()
+            total_tokens += mask.sum().item()
     
-    # Calculate average perplexity
-    avg_loss = total_loss / total_tokens
-    perplexity = np.exp(avg_loss)
+    # Calculate perplexity
+    perplexity = torch.exp(torch.tensor(total_loss / total_tokens)).item()
     return perplexity
 
-def evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, device, cfg):
+def compress_kv_cache(past_key_values, autoencoder):
+    """Compress the KV cache using the autoencoder."""
+    compressed_cache = []
+    for layer in past_key_values:
+        keys, values = layer
+        # Compress keys and values
+        k_compressed, _ = autoencoder(keys.reshape(-1, keys.size(-1)))
+        v_compressed, _ = autoencoder(values.reshape(-1, values.size(-1)))
+        
+        # Reshape back to original dimensions
+        k_compressed = k_compressed.reshape(keys.shape)
+        v_compressed = v_compressed.reshape(values.shape)
+        compressed_cache.append((k_compressed, v_compressed))
+    return compressed_cache
+
+def evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, max_length=1024):
     """
     Evaluate model using compressed KV cache.
     
@@ -57,8 +80,7 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, device,
         tokenizer: The tokenizer
         autoencoder: The trained autoencoder
         texts: List of texts to evaluate
-        device: Device to run on
-        cfg: Configuration dictionary
+        max_length: Maximum sequence length
         
     Returns:
         float: Average perplexity
@@ -70,63 +92,49 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, device,
     
     with torch.no_grad():
         for text in tqdm(texts, desc="Evaluating with compressed cache"):
-            # Tokenize the text
-            inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=cfg["max_seq_len"])
-            input_ids = inputs["input_ids"].to(device)
-            attention_mask = inputs["attention_mask"].to(device)
+            # Tokenize and prepare input
+            inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_length)
+            input_ids = inputs["input_ids"].to(model.device)
+            attention_mask = inputs["attention_mask"].to(model.device)
             
-            # Get model outputs with caching
-            outputs = model(
-                input_ids,
-                attention_mask=attention_mask,
-                use_cache=True,
-                output_hidden_states=True,
-                return_dict=True
-            )
+            # Initialize KV cache
+            past_key_values = None
             
-            # Compress and decompress KV cache
-            past_key_values = outputs.past_key_values
-            compressed_cache = []
-            
-            for layer in past_key_values:
-                keys, values = layer
-                # Compress keys and values
-                k_compressed, _ = autoencoder(keys.reshape(-1, cfg["head_dim"]))
-                v_compressed, _ = autoencoder(values.reshape(-1, cfg["head_dim"]))
+            # Process one token at a time
+            for i in range(input_ids.size(1) - 1):
+                # Skip if this is a padding token
+                if not attention_mask[0, i+1].item():
+                    continue
+                    
+                # Get current token and attention mask
+                current_input = input_ids[:, i:i+1]
+                current_mask = attention_mask[:, i:i+1]
                 
-                # Reshape back to original dimensions
-                k_compressed = k_compressed.reshape(keys.shape)
-                v_compressed = v_compressed.reshape(values.shape)
-                compressed_cache.append((k_compressed, v_compressed))
-            
-            # Use compressed cache for next token prediction
-            # Create a new attention mask for the next token prediction
-            next_token_mask = torch.ones((1, 1), device=device)  # Shape: (batch_size=1, seq_len=1)
-            
-            # Forward pass with compressed cache
-            next_token_logits = model(
-                input_ids=input_ids[:, -1:],  # Only use the last token
-                attention_mask=next_token_mask,
-                past_key_values=compressed_cache,
-                return_dict=True
-            ).logits
-            
-            # Calculate loss
-            # We only need to compare the predicted next token with the actual next token
-            loss = F.cross_entropy(
-                next_token_logits.view(-1, next_token_logits.size(-1)),  # Flatten logits
-                input_ids[:, -1].view(-1)  # Target is the last token
-            )
-            
-            total_loss += loss.item()
-            total_tokens += 1  # We're predicting one token at a time
+                # Get model outputs with compressed cache
+                outputs = model(
+                    current_input,
+                    attention_mask=current_mask,
+                    past_key_values=past_key_values,
+                    use_cache=True
+                )
+                
+                # Compress and store KV cache
+                past_key_values = compress_kv_cache(outputs.past_key_values, autoencoder)
+                
+                # Calculate loss for next token
+                next_token_logits = outputs.logits[..., -1, :]
+                next_token_id = input_ids[:, i+1]
+                loss_fct = nn.CrossEntropyLoss(reduction='none')
+                loss = loss_fct(next_token_logits, next_token_id)
+                
+                total_loss += loss.item()
+                total_tokens += 1
     
-    # Calculate average perplexity
-    avg_loss = total_loss / total_tokens
-    perplexity = np.exp(avg_loss)
+    # Calculate perplexity
+    perplexity = torch.exp(torch.tensor(total_loss / total_tokens)).item()
     return perplexity
 
-def evaluate_longbench(model, tokenizer, autoencoder, device, cfg):
+def evaluate_longbench(model, tokenizer, autoencoder, cfg):
     """
     Evaluate on LongBench dataset.
     
@@ -134,7 +142,6 @@ def evaluate_longbench(model, tokenizer, autoencoder, device, cfg):
         model: The language model
         tokenizer: The tokenizer
         autoencoder: The trained autoencoder
-        device: Device to run on
         cfg: Configuration dictionary
         
     Returns:
@@ -163,11 +170,11 @@ def evaluate_longbench(model, tokenizer, autoencoder, device, cfg):
             texts = dataset["test"]["input"]
             
             # Calculate baseline perplexity
-            baseline_ppl = calculate_perplexity(model, tokenizer, texts, device)
+            baseline_ppl = calculate_perplexity(model, tokenizer, texts, cfg["max_seq_len"])
             results["baseline"][subset] = baseline_ppl
             
             # Calculate perplexity with compressed cache
-            compressed_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, device, cfg)
+            compressed_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, cfg["max_seq_len"])
             results["compressed"][subset] = compressed_ppl
             
             print(f"{subset} - Baseline PPL: {baseline_ppl:.2f}, Compressed PPL: {compressed_ppl:.2f}")
@@ -256,16 +263,16 @@ def main(cfg):
     
     # Calculate perplexity
     print("\nCalculating baseline perplexity...")
-    baseline_ppl = calculate_perplexity(model, tokenizer, eval_texts, device)
+    baseline_ppl = calculate_perplexity(model, tokenizer, eval_texts, cfg["max_seq_len"])
     print(f"Baseline perplexity: {baseline_ppl:.2f}")
     
     print("\nCalculating perplexity with compressed cache...")
-    compressed_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoder, eval_texts, device, cfg)
+    compressed_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoder, eval_texts, cfg["max_seq_len"])
     print(f"Compressed cache perplexity: {compressed_ppl:.2f}")
     
     # Evaluate on LongBench
     print("\nEvaluating on LongBench...")
-    longbench_results = evaluate_longbench(model, tokenizer, autoencoder, device, cfg)
+    longbench_results = evaluate_longbench(model, tokenizer, autoencoder, cfg)
     
     # Plot results
     plot_path = os.path.join(cfg["output_dir"], "perplexity_comparison.png")
@@ -297,4 +304,4 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         cfg = json.load(f)
     
-    main(cfg) 
+    main(cfg)
