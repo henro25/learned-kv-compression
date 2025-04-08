@@ -1,20 +1,20 @@
 {
-  "baseline_perplexity": 86.1097813889428,
-  "compressed_perplexity": 21.005988543492737,
+  "baseline_perplexity": 86.18492889404297,
+  "compressed_perplexity": 2879.0185546875,
   "longbench_results": {
     "baseline": {
-      "narrativeqa": 414.4590983085081,
-      "hotpotqa": 272.09670420286955,
-      "2wikimqa": 421.8590950063149,
-      "musique": 212.9349937147038,
-      "dureader": 68.44379086690319
+      "narrativeqa": 405.4547119140625,
+      "hotpotqa": 269.3837890625,
+      "2wikimqa": 420.951904296875,
+      "musique": 211.1696014404297,
+      "dureader": 68.05569458007812
     },
     "compressed": {
-      "narrativeqa": 1802.4115778021126,
-      "hotpotqa": 1813.317730110514,
-      "2wikimqa": 2120.0298801942563,
-      "musique": 1382.4884177269053,
-      "dureader": 6473.409374736281
+      "narrativeqa": 2607.59033203125,
+      "hotpotqa": 1883.7279052734375,
+      "2wikimqa": 2910.572998046875,
+      "musique": 1235.0096435546875,
+      "dureader": 957.8870849609375
     }
   }
 }

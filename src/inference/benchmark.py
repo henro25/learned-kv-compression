@@ -14,242 +14,331 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import torch
+import torch.nn.functional as F
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from datasets import load_dataset
+from src.models.autoencoder import Autoencoder
+import torch.nn as nn
+import seaborn as sns
+import pandas as pd
 
 from src.inference.inference import KVCacheInference
 
-def run_benchmark(model_name, autoencoder_path=None, latent_dim=16, batch_size=1, num_runs=5, 
-                  sizes=None, output_dir="results"):
-    """
-    Run benchmarks for different KV cache sizes.
+def calculate_perplexity(model, tokenizer, texts, max_length=1024):
+    """Calculate perplexity for a list of texts."""
+    model.eval()
+    total_loss = 0
+    total_tokens = 0
     
-    Args:
-        model_name (str): Name of the model to use
-        autoencoder_path (str, optional): Path to trained autoencoder
-        latent_dim (int): Latent dimension of autoencoder
-        batch_size (int): Batch size for compression/decompression operations
-        num_runs (int): Number of runs for timing statistics
-        sizes (list): List of KV cache sizes in MB to benchmark
-        output_dir (str): Directory to save results
-    """
-    if sizes is None:
-        sizes = [1, 10, 100, 1000, 3000]  # Default sizes in MB (up to 3GB)
+    with torch.no_grad():
+        for text in tqdm(texts, desc="Calculating perplexity"):
+            # Tokenize and prepare input
+            inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_length)
+            input_ids = inputs["input_ids"].to(model.device)
+            attention_mask = inputs["attention_mask"].to(model.device)
+            
+            # Get model outputs
+            outputs = model(input_ids, attention_mask=attention_mask)
+            logits = outputs.logits
+            
+            # Calculate loss for each token
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = input_ids[..., 1:].contiguous()
+            loss_fct = nn.CrossEntropyLoss(reduction='none')
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            
+            # Mask out padding tokens
+            mask = attention_mask[..., 1:].contiguous().view(-1)
+            loss = loss * mask
+            
+            total_loss += loss.sum().item()
+            total_tokens += mask.sum().item()
     
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
+    # Calculate perplexity
+    perplexity = torch.exp(torch.tensor(total_loss / total_tokens)).item()
+    return perplexity
+
+def compress_kv_cache(past_key_values, autoencoder):
+    """Compress the KV cache using the autoencoder."""
+    if past_key_values is None:
+        return None
+        
+    compressed_cache = []
+    for layer in past_key_values:
+        keys, values = layer
+        # Compress keys and values
+        k_compressed, _ = autoencoder(keys.reshape(-1, keys.size(-1)))
+        v_compressed, _ = autoencoder(values.reshape(-1, values.size(-1)))
+        
+        # Reshape back to original dimensions
+        k_compressed = k_compressed.reshape(keys.shape)
+        v_compressed = v_compressed.reshape(values.shape)
+        compressed_cache.append((k_compressed, v_compressed))
+    return compressed_cache
+
+def evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, max_length=1024):
+    """Evaluate model using compressed KV cache."""
+    model.eval()
+    autoencoder.eval()
+    total_loss = 0
+    total_tokens = 0
     
-    # Initialize inference
-    inference = KVCacheInference(
-        model_name=model_name,
-        autoencoder_path=autoencoder_path,
-        latent_dim=latent_dim,
-        batch_size=batch_size
-    )
+    with torch.no_grad():
+        for text in tqdm(texts, desc="Evaluating with compressed cache"):
+            # Tokenize and prepare input
+            inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_length)
+            input_ids = inputs["input_ids"].to(model.device)
+            attention_mask = inputs["attention_mask"].to(model.device)
+            
+            # Initialize KV cache
+            past_key_values = None
+            
+            # Process one token at a time
+            for i in range(input_ids.size(1) - 1):
+                # Skip if this is a padding token
+                if not attention_mask[0, i+1].item():
+                    continue
+                    
+                # Get current token and attention mask
+                current_input = input_ids[:, i:i+1]
+                current_mask = attention_mask[:, i:i+1]
+                
+                # Get model outputs with compressed cache
+                outputs = model(
+                    current_input,
+                    attention_mask=current_mask,
+                    past_key_values=past_key_values,
+                    use_cache=True
+                )
+                
+                # Compress and store KV cache
+                past_key_values = compress_kv_cache(outputs.past_key_values, autoencoder)
+                
+                # Calculate loss for next token
+                next_token_logits = outputs.logits[..., -1, :]
+                next_token_id = input_ids[:, i+1]
+                loss_fct = nn.CrossEntropyLoss(reduction='none')
+                loss = loss_fct(next_token_logits, next_token_id)
+                
+                total_loss += loss.item()
+                total_tokens += 1
+    
+    # Calculate perplexity
+    perplexity = torch.exp(torch.tensor(total_loss / total_tokens)).item()
+    return perplexity
+
+def evaluate_longbench(model, tokenizer, autoencoder, cfg):
+    """Evaluate on LongBench dataset."""
+    # Define the LongBench subsets to evaluate
+    longbench_subsets = [
+        'narrativeqa',
+        'hotpotqa',
+        '2wikimqa',
+        'musique',
+        'dureader'
+    ]
     
     results = {
-        "model": model_name,
-        "autoencoder": autoencoder_path,
-        "latent_dim": latent_dim,
-        "batch_size": batch_size,
-        "num_runs": num_runs,
-        "benchmarks": {}
+        "baseline": {},
+        "compressed": {}
     }
     
-    # Run benchmark for each size
-    for size_mb in tqdm(sizes, desc="Benchmarking different cache sizes"):
-        print(f"\nRunning benchmark for {size_mb}MB KV cache")
-        
-        # Generate prompt and KV cache
-        prompt = "Once upon a time in a land far away, there was a kingdom of"
-        past_key_values, generated_text, actual_size_mb = inference.generate_kv_cache(prompt, size_mb)
-        
-        # Store the actual size
-        size_result = {
-            "target_size_mb": size_mb,
-            "actual_size_mb": actual_size_mb,
-            "generated_text": generated_text,
-            "times": {}
-        }
-        
-        # Measure time to first token without compression (baseline)
-        print("Measuring baseline (no compression)...")
-        cpu_kv_cache = tuple((k.cpu(), v.cpu()) for k, v in past_key_values)
-        baseline_avg, baseline_std, _ = inference.measure_time_to_first_token(
-            generated_text, 
-            cpu_kv_cache=cpu_kv_cache, 
-            use_compression=False,
-            num_runs=num_runs
-        )
-        size_result["times"]["baseline"] = {
-            "avg": baseline_avg,
-            "std_dev": baseline_std
-        }
-        
-        # If autoencoder is provided, measure with compression
-        if autoencoder_path:
-            print("Compressing KV cache...")
-            # Compress KV cache
-            compressed_kv = inference.compress_kv_cache(past_key_values)
-            cpu_compressed_kv = inference.move_to_cpu(compressed_kv)
+    # Evaluate on each subset
+    for subset in longbench_subsets:
+        print(f"\nEvaluating on {subset}...")
+        try:
+            # Load the specific subset
+            dataset = load_dataset("THUDM/LongBench", subset)
+            texts = dataset["test"]["input"]
             
-            print("Measuring with compression...")
-            # Measure time to first token with compression
-            compressed_avg, compressed_std, _ = inference.measure_time_to_first_token(
-                generated_text, 
-                cpu_kv_cache=cpu_compressed_kv, 
-                use_compression=True,
-                num_runs=num_runs
-            )
-            size_result["times"]["compressed"] = {
-                "avg": compressed_avg,
-                "std_dev": compressed_std
-            }
+            # Calculate baseline perplexity
+            baseline_ppl = calculate_perplexity(model, tokenizer, texts, cfg["max_seq_len"])
+            results["baseline"][subset] = baseline_ppl
             
-            # Calculate compression ratio
-            original_size = sum(k.nelement() * k.element_size() + v.nelement() * v.element_size() 
-                               for k, v in past_key_values)
-            compressed_size = sum(k.nelement() * k.element_size() + v.nelement() * v.element_size() 
-                                 for k, v, _, _ in compressed_kv)
-            compression_ratio = original_size / compressed_size
-            size_result["compression_ratio"] = compression_ratio
+            # Calculate perplexity with compressed cache
+            compressed_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, cfg["max_seq_len"])
+            results["compressed"][subset] = compressed_ppl
             
-            # Calculate speedup
-            speedup = baseline_avg / compressed_avg
-            size_result["speedup"] = speedup
-            
-            print(f"Compression ratio: {compression_ratio:.2f}x")
-            print(f"Speedup factor: {speedup:.2f}x")
-        
-        print(f"Time to first token (baseline): {baseline_avg:.4f}s ± {baseline_std:.4f}s")
-        if autoencoder_path:
-            print(f"Time to first token (compressed): {compressed_avg:.4f}s ± {compressed_std:.4f}s")
-        
-        # Add to results
-        results["benchmarks"][str(size_mb)] = size_result
-    
-    # Save full results
-    results_file = os.path.join(output_dir, "benchmark_results.json")
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=2)
-    
-    print(f"Results saved to {results_file}")
-    
-    # Generate visualizations
-    visualize_results(results, output_dir)
+            print(f"{subset} - Baseline PPL: {baseline_ppl:.2f}, Compressed PPL: {compressed_ppl:.2f}")
+        except Exception as e:
+            print(f"Error evaluating {subset}: {str(e)}")
+            results["baseline"][subset] = None
+            results["compressed"][subset] = None
     
     return results
 
-def visualize_results(results, output_dir):
-    """
-    Generate visualizations of benchmark results.
+def plot_results(results, output_dir):
+    """Create and save visualization plots."""
+    # Create output directory for plots
+    plots_dir = os.path.join(output_dir, "plots")
+    os.makedirs(plots_dir, exist_ok=True)
     
-    Args:
-        results (dict): Benchmark results
-        output_dir (str): Directory to save visualizations
-    """
-    # Extract data for plotting
-    sizes = []
-    baseline_times = []
-    baseline_errors = []
-    compressed_times = []
-    compressed_errors = []
-    compression_ratios = []
-    speedups = []
+    # 1. Perplexity comparison bar plot
+    plt.figure(figsize=(12, 6))
+    subsets = list(results["longbench_results"]["baseline"].keys())
+    baseline_ppl = [results["longbench_results"]["baseline"][s] for s in subsets]
+    compressed_ppl = [results["longbench_results"]["compressed"][s] for s in subsets]
     
-    for size_mb, data in results["benchmarks"].items():
-        sizes.append(float(size_mb))
-        
-        # Extract baseline times with error bars
-        baseline_times.append(data["times"]["baseline"]["avg"])
-        baseline_errors.append(data["times"]["baseline"]["std_dev"])
-        
-        # Extract compressed times with error bars if available
-        if "compressed" in data["times"]:
-            compressed_times.append(data["times"]["compressed"]["avg"])
-            compressed_errors.append(data["times"]["compressed"]["std_dev"])
-        
-        # Extract additional metrics if available
-        if "compression_ratio" in data:
-            compression_ratios.append(data["compression_ratio"])
-        if "speedup" in data:
-            speedups.append(data["speedup"])
+    x = np.arange(len(subsets))
+    width = 0.35
     
-    # Sort by size
-    sorted_indices = np.argsort(sizes)
-    sizes = [sizes[i] for i in sorted_indices]
-    baseline_times = [baseline_times[i] for i in sorted_indices]
-    baseline_errors = [baseline_errors[i] for i in sorted_indices]
+    plt.bar(x - width/2, baseline_ppl, width, label='Baseline')
+    plt.bar(x + width/2, compressed_ppl, width, label='Compressed Cache')
     
-    if compressed_times:
-        compressed_times = [compressed_times[i] for i in sorted_indices]
-        compressed_errors = [compressed_errors[i] for i in sorted_indices]
-    
-    if compression_ratios:
-        compression_ratios = [compression_ratios[i] for i in sorted_indices]
-    
-    if speedups:
-        speedups = [speedups[i] for i in sorted_indices]
-    
-    # Plot time to first token comparison with error bars
-    plt.figure(figsize=(10, 6))
-    plt.errorbar(sizes, baseline_times, yerr=baseline_errors, fmt='o-', 
-                label='Baseline (No Compression)', capsize=4)
-    if compressed_times:
-        plt.errorbar(sizes, compressed_times, yerr=compressed_errors, fmt='s-', 
-                    label='With Compression', capsize=4)
-    plt.xscale('log')
-    plt.xlabel('KV Cache Size (MB)')
-    plt.ylabel('Time to First Token (s)')
-    plt.title('KV Cache Loading Time Comparison')
-    plt.grid(True, which="both", ls="--")
+    plt.xlabel('Dataset Subset')
+    plt.ylabel('Perplexity')
+    plt.title('Perplexity Comparison: Baseline vs Compressed Cache')
+    plt.xticks(x, subsets, rotation=45)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'time_comparison.png'), dpi=300)
+    plt.savefig(os.path.join(plots_dir, "perplexity_comparison.png"))
+    plt.close()
     
-    # Plot compression ratio if available
-    if compression_ratios:
-        plt.figure(figsize=(10, 6))
-        plt.plot(sizes, compression_ratios, 'o-', color='green')
-        plt.xscale('log')
-        plt.xlabel('KV Cache Size (MB)')
-        plt.ylabel('Compression Ratio')
-        plt.title('KV Cache Compression Ratio')
-        plt.grid(True, which="both", ls="--")
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, 'compression_ratio.png'), dpi=300)
+    # 2. Perplexity ratio heatmap
+    perplexity_ratio = np.array(compressed_ppl) / np.array(baseline_ppl)
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(
+        perplexity_ratio.reshape(1, -1),
+        annot=True,
+        fmt=".2f",
+        cmap="YlOrRd",
+        xticklabels=subsets,
+        yticklabels=["Ratio"],
+        cbar_kws={'label': 'Compressed/Baseline Perplexity Ratio'}
+    )
+    plt.title("Perplexity Ratio Across Datasets")
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_dir, "perplexity_ratio_heatmap.png"))
+    plt.close()
     
-    # Plot speedup if available
-    if speedups:
-        plt.figure(figsize=(10, 6))
-        plt.plot(sizes, speedups, 'o-', color='purple')
-        plt.xscale('log')
-        plt.axhline(y=1.0, color='r', linestyle='--')
-        plt.xlabel('KV Cache Size (MB)')
-        plt.ylabel('Speedup Factor (Baseline / Compressed)')
-        plt.title('Speedup from Compression')
-        plt.grid(True, which="both", ls="--")
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, 'speedup.png'), dpi=300)
+    # 3. Performance degradation plot
+    degradation = (np.array(compressed_ppl) - np.array(baseline_ppl)) / np.array(baseline_ppl) * 100
+    plt.figure(figsize=(12, 6))
+    plt.bar(subsets, degradation)
+    plt.axhline(y=0, color='r', linestyle='-')
+    plt.xlabel('Dataset Subset')
+    plt.ylabel('Performance Degradation (%)')
+    plt.title('Performance Degradation with Compressed Cache')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_dir, "performance_degradation.png"))
+    plt.close()
+
+def save_results(results, output_dir):
+    """Save evaluation results to files."""
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Save results as JSON
+    results_path = os.path.join(output_dir, "evaluation_results.json")
+    with open(results_path, "w") as f:
+        json.dump(results, f, indent=2)
+    
+    # Save results as CSV
+    df = pd.DataFrame({
+        'Dataset': list(results["longbench_results"]["baseline"].keys()) + ['WikiText'],
+        'Baseline_PPL': list(results["longbench_results"]["baseline"].values()) + [results["baseline_perplexity"]],
+        'Compressed_PPL': list(results["longbench_results"]["compressed"].values()) + [results["compressed_perplexity"]]
+    })
+    df['Ratio'] = df['Compressed_PPL'] / df['Baseline_PPL']
+    df['Degradation (%)'] = (df['Compressed_PPL'] - df['Baseline_PPL']) / df['Baseline_PPL'] * 100
+    
+    csv_path = os.path.join(output_dir, "evaluation_results.csv")
+    df.to_csv(csv_path, index=False)
+    
+    return results_path, csv_path
+
+def run_benchmark(
+    model_name: str,
+    autoencoder_path: str,
+    latent_dim: int,
+    cache_sizes: List[float],
+    batch_size: int,
+    num_runs: int,
+    output_dir: str,
+    cfg: Dict
+) -> str:
+    """Run benchmarks with the trained autoencoder."""
+    result_dir = os.path.join(output_dir, f"benchmark_{model_name}_latent{latent_dim}")
+    os.makedirs(result_dir, exist_ok=True)
+    
+    # Set device
+    device = torch.device(cfg["device"])
+    
+    # Load model and tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch.float32,
+        device_map={"": device},
+        output_hidden_states=True,
+        output_attentions=True,
+        use_cache=True
+    )
+    
+    # Load trained autoencoder
+    autoencoder = Autoencoder(input_dim=cfg["head_dim"], latent_dim=latent_dim).to(device)
+    autoencoder.load_state_dict(torch.load(autoencoder_path))
+    
+    # Load WikiText evaluation texts
+    dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
+    eval_texts = [text for text in dataset["test"]["text"] if text.strip()][:cfg["num_eval_texts"]]
+    
+    # Calculate WikiText perplexity
+    print("\nCalculating WikiText perplexity...")
+    baseline_ppl = calculate_perplexity(model, tokenizer, eval_texts, cfg["max_seq_len"])
+    print(f"Baseline perplexity: {baseline_ppl:.2f}")
+    
+    compressed_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoder, eval_texts, cfg["max_seq_len"])
+    print(f"Compressed cache perplexity: {compressed_ppl:.2f}")
+    
+    # Evaluate on LongBench
+    print("\nEvaluating on LongBench...")
+    longbench_results = evaluate_longbench(model, tokenizer, autoencoder, cfg)
+    
+    # Prepare results
+    results = {
+        "baseline_perplexity": baseline_ppl,
+        "compressed_perplexity": compressed_ppl,
+        "longbench_results": longbench_results,
+        "config": cfg
+    }
+    
+    # Save results and create visualizations
+    results_path, csv_path = save_results(results, result_dir)
+    plot_results(results, result_dir)
+    
+    print("\nBenchmarking complete!")
+    print(f"Results saved in {result_dir}")
+    print(f"- Evaluation results (JSON): {results_path}")
+    print(f"- Evaluation results (CSV): {csv_path}")
+    print(f"- Plots saved in {os.path.join(result_dir, 'plots')}")
+    
+    return result_dir
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="KV Cache Compression Benchmark")
-    parser.add_argument("--model", type=str, default="distilgpt2", help="Model name")
-    parser.add_argument("--autoencoder", type=str, help="Path to trained autoencoder")
-    parser.add_argument("--latent_dim", type=int, default=16, help="Latent dimension of autoencoder")
-    parser.add_argument("--batch_size", type=int, default=1024, help="Batch size for compression operations")
-    parser.add_argument("--num_runs", type=int, default=5, help="Number of runs for timing statistics")
-    parser.add_argument("--sizes", type=float, nargs="+", default=[1, 10, 100, 1000, 3000], 
-                        help="KV cache sizes in MB to benchmark")
-    parser.add_argument("--output", type=str, default="results", help="Output directory for results")
-    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, required=True, help="Model name")
+    parser.add_argument("--autoencoder", type=str, required=True, help="Path to autoencoder model")
+    parser.add_argument("--latent_dim", type=int, required=True, help="Latent dimension")
+    parser.add_argument("--cache_sizes", type=float, nargs="+", required=True, help="Cache sizes to test")
+    parser.add_argument("--batch_size", type=int, default=1024, help="Batch size")
+    parser.add_argument("--num_runs", type=int, default=5, help="Number of runs for timing")
+    parser.add_argument("--output", type=str, required=True, help="Output directory")
+    parser.add_argument("--config", type=str, required=True, help="Path to config file")
     args = parser.parse_args()
     
-    # Run benchmark
-    results = run_benchmark(
-        model_name=args.model,
-        autoencoder_path=args.autoencoder,
-        latent_dim=args.latent_dim,
-        batch_size=args.batch_size,
-        num_runs=args.num_runs,
-        sizes=args.sizes,
-        output_dir=args.output
+    with open(args.config, "r") as f:
+        cfg = json.load(f)
+    
+    run_benchmark(
+        args.model,
+        args.autoencoder,
+        args.latent_dim,
+        args.cache_sizes,
+        args.batch_size,
+        args.num_runs,
+        args.output,
+        cfg
     ) 
