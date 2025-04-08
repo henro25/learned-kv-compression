@@ -25,13 +25,13 @@ def parse_args():
     parser.add_argument("--latent_dims", type=int, nargs="+", default=[8, 16, 32], 
                         help="Latent dimensions to test")
     parser.add_argument("--cache_sizes", type=float, nargs="+", 
-                        default=[1, 10, 100, 1000, 3000],
+                        default=[1, 10, 100, 1000],
                         help="KV cache sizes in MB to test")
     parser.add_argument("--num_epochs", type=int, default=5, 
                         help="Number of epochs for training")
-    parser.add_argument("--num_train_texts", type=int, default=1000, 
+    parser.add_argument("--num_train_texts", type=int, default=10000, 
                         help="Number of training texts to use")
-    parser.add_argument("--batch_size", type=int, default=1024,
+    parser.add_argument("--batch_size", type=int, default=64,
                         help="Batch size for compression operations")
     parser.add_argument("--num_runs", type=int, default=5,
                         help="Number of runs for timing statistics")

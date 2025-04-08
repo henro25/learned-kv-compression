@@ -3,7 +3,7 @@
   "input_dim": 64,
   "latent_dim": 16,
   "batch_size": 2,
-  "num_epochs": 10,
+  "num_epochs": 20,
   "lr": 0.0001,
   "seed": 42,
   "head_dim": 64,
@@ -14,7 +14,7 @@
   "eval_interval": 100,
   "config": "src/configs/default_config.json",
   "output_dir": "models",
-  "num_train_texts": 2000,
+  "num_train_texts": 10000,
   "num_eval_texts": 200,
   "device": "cuda",
   "max_seq_len": 256
