@@ -73,7 +73,7 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
     cmd = [
         "python", "-m", "src.dictionary_learning.train",
         "--config", config_path,
-        "output_dir", model_dir
+        "--output_dir", model_dir
     ]
     
     print(f"\n{'='*80}")
