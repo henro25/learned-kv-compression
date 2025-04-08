@@ -14,8 +14,8 @@
   "eval_interval": 100,
   "config": "src/configs/default_config.json",
   "output_dir": "models",
-  "num_train_texts": 1000,
-  "num_eval_texts": 100,
+  "num_train_texts": 2000,
+  "num_eval_texts": 200,
   "device": "cuda",
   "max_seq_len": 256
 }

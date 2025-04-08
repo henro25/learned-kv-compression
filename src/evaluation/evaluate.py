@@ -12,7 +12,7 @@ from src.utils.buffer import Buffer
 
 def calculate_perplexity(model, tokenizer, texts, device, max_length=2048):
     """
-    Calculate perplexity for a list of texts.
+    Calculate perplexity for a list of texts by predicting one token at a time.
     
     Args:
         model: The language model
@@ -35,13 +35,26 @@ def calculate_perplexity(model, tokenizer, texts, device, max_length=2048):
             input_ids = inputs["input_ids"].to(device)
             attention_mask = inputs["attention_mask"].to(device)
             
-            # Get model outputs
-            outputs = model(input_ids, attention_mask=attention_mask, labels=input_ids)
-            loss = outputs.loss
-            
-            # Accumulate loss and token count
-            total_loss += loss.item() * input_ids.size(1)
-            total_tokens += input_ids.size(1)
+            # Process the sequence one token at a time
+            for i in range(input_ids.size(1) - 1):
+                # Get current input and target
+                current_input = input_ids[:, :i+1]
+                current_mask = attention_mask[:, :i+1]
+                target = input_ids[:, i+1]
+                
+                # Get model outputs for next token prediction
+                outputs = model(
+                    input_ids=current_input,
+                    attention_mask=current_mask,
+                    return_dict=True
+                )
+                
+                # Calculate loss for next token prediction
+                logits = outputs.logits[:, -1, :]
+                loss = F.cross_entropy(logits, target)
+                
+                total_loss += loss.item()
+                total_tokens += 1
     
     # Calculate average perplexity
     avg_loss = total_loss / total_tokens
@@ -75,51 +88,56 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, device,
             input_ids = inputs["input_ids"].to(device)
             attention_mask = inputs["attention_mask"].to(device)
             
-            # Get model outputs with caching
-            outputs = model(
-                input_ids,
-                attention_mask=attention_mask,
-                use_cache=True,
-                output_hidden_states=True,
-                return_dict=True
-            )
-            
-            # Compress and decompress KV cache
-            past_key_values = outputs.past_key_values
-            compressed_cache = []
-            
-            for layer in past_key_values:
-                keys, values = layer
-                # Compress keys and values
-                k_compressed, _ = autoencoder(keys.reshape(-1, cfg["head_dim"]))
-                v_compressed, _ = autoencoder(values.reshape(-1, cfg["head_dim"]))
+            # Process the sequence one token at a time
+            for i in range(input_ids.size(1) - 1):
+                # Get current input and target
+                current_input = input_ids[:, :i+1]
+                current_mask = attention_mask[:, :i+1]
+                target = input_ids[:, i+1]
                 
-                # Reshape back to original dimensions
-                k_compressed = k_compressed.reshape(keys.shape)
-                v_compressed = v_compressed.reshape(values.shape)
-                compressed_cache.append((k_compressed, v_compressed))
-            
-            # Use compressed cache for next token prediction
-            # Create a new attention mask for the next token prediction
-            next_token_mask = torch.ones((1, 1), device=device)  # Shape: (batch_size=1, seq_len=1)
-            
-            # Forward pass with compressed cache
-            next_token_logits = model(
-                input_ids=input_ids[:, -1:],  # Only use the last token
-                attention_mask=next_token_mask,
-                past_key_values=compressed_cache,
-                return_dict=True
-            ).logits
-            
-            # Calculate loss
-            # We only need to compare the predicted next token with the actual next token
-            loss = F.cross_entropy(
-                next_token_logits.view(-1, next_token_logits.size(-1)),  # Flatten logits
-                input_ids[:, -1].view(-1)  # Target is the last token
-            )
-            
-            total_loss += loss.item()
-            total_tokens += 1  # We're predicting one token at a time
+                # Get model outputs with caching
+                outputs = model(
+                    current_input,
+                    attention_mask=current_mask,
+                    use_cache=True,
+                    output_hidden_states=True,
+                    return_dict=True
+                )
+                
+                # Compress and decompress KV cache
+                past_key_values = outputs.past_key_values
+                compressed_cache = []
+                
+                for layer in past_key_values:
+                    keys, values = layer
+                    # Compress keys and values
+                    k_compressed, _ = autoencoder(keys.reshape(-1, cfg["head_dim"]))
+                    v_compressed, _ = autoencoder(values.reshape(-1, cfg["head_dim"]))
+                    
+                    # Reshape back to original dimensions
+                    k_compressed = k_compressed.reshape(keys.shape)
+                    v_compressed = v_compressed.reshape(values.shape)
+                    compressed_cache.append((k_compressed, v_compressed))
+                
+                # Use compressed cache for next token prediction
+                next_token_mask = torch.ones((1, 1), device=device)
+                
+                # Forward pass with compressed cache
+                next_token_logits = model(
+                    input_ids=input_ids[:, -1:],  # Only use the last token
+                    attention_mask=next_token_mask,
+                    past_key_values=compressed_cache,
+                    return_dict=True
+                ).logits
+                
+                # Calculate loss
+                loss = F.cross_entropy(
+                    next_token_logits.view(-1, next_token_logits.size(-1)),
+                    target.view(-1)
+                )
+                
+                total_loss += loss.item()
+                total_tokens += 1
     
     # Calculate average perplexity
     avg_loss = total_loss / total_tokens
