@@ -2,8 +2,6 @@
 Module Name: plot_comprehensive.py
 Description: This module generates comprehensive plots for the autoencoder tradeoff experiments,
 including plots that align with the original proposal.
-Author: Ben Choi
-Date: 2024-04-09
 """
 
 import json
