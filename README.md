@@ -112,15 +112,4 @@ Possible improvements to explore:
 - Per-layer specialized autoencoders to capture layer-specific patterns
 - Pruning techniques to identify and compress only the most important KV vectors
 
-## Citation
 
-If you use this code in your research, please cite:
-
-```bibtex
-@misc{learned-kv-compression,
-  author = {Ben Choi and Henry Huang},
-  title = {Learned KV Cache Compression},
-  howpublished = {\url{https://github.com/bjpchoi/lkvc}},
-  note = {Harvard College}
-}
-```
