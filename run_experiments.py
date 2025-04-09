@@ -25,13 +25,13 @@ def parse_args():
     parser.add_argument("--latent_dims", type=int, nargs="+", default=[8, 16, 32], 
                         help="Latent dimensions to test")
     parser.add_argument("--cache_sizes", type=float, nargs="+", 
-                        default=[1, 10, 100, 1000, 3000],
+                        default=[1, 10, 100, 1000],
                         help="KV cache sizes in MB to test")
     parser.add_argument("--num_epochs", type=int, default=5, 
                         help="Number of epochs for training")
-    parser.add_argument("--num_train_texts", type=int, default=1000, 
+    parser.add_argument("--num_train_texts", type=int, default=100, 
                         help="Number of training texts to use")
-    parser.add_argument("--batch_size", type=int, default=1024,
+    parser.add_argument("--batch_size", type=int, default=64,
                         help="Batch size for compression operations")
     parser.add_argument("--num_runs", type=int, default=5,
                         help="Number of runs for timing statistics")
@@ -54,6 +54,8 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
     model_dir = os.path.join(output_dir, f"{model_name}_latent{latent_dim}")
     os.makedirs(model_dir, exist_ok=True)
     
+    print("MODEL DIR: ", model_dir)
+    
     # Update config with training parameters
     train_cfg = cfg.copy()
     train_cfg.update({
@@ -70,7 +72,11 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
     
     cmd = [
         "python", "-m", "src.dictionary_learning.train",
-        "--config", config_path
+        "--config", config_path,
+        "--latent_dim", str(latent_dim),
+        "--num_epochs", str(num_epochs),
+        "--num_train_texts", str(num_train_texts),
+        "--output_dir", model_dir
     ]
     
     print(f"\n{'='*80}")
@@ -140,6 +146,7 @@ def main():
     model_results = []
     
     for latent_dim in args.latent_dims:
+        
         # Train autoencoder (unless skipped)
         if not args.skip_training:
             model_path = train_autoencoder(
@@ -152,8 +159,7 @@ def main():
             )
         else:
             # Use existing model if skipping training
-            model_dir = os.path.join(args.output_dir, f"{args.model}_latent{latent_dim}")
-            model_path = os.path.join(model_dir, "autoencoder_final.pth")
+            model_path = os.path.join(args.output_dir, "autoencoder_final.pth")
             if not os.path.exists(model_path):
                 print(f"Warning: Model {model_path} not found. Skipping latent_dim={latent_dim}.")
                 continue
