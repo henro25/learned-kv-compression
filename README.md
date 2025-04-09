@@ -23,8 +23,8 @@ When serving LLMs, a significant memory bottleneck is storing and transferring K
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/yourusername/learned-kv-compression.git
-cd learned-kv-compression
+git clone https://github.com/bjpchoi/lkvc.git
+cd lkvc
 pip install -r requirements.txt
 ```
 
@@ -52,6 +52,16 @@ python -m src.dictionary_learning.train \
 ```
 
 This trains an autoencoder that compresses each KV vector to a 16-dimensional latent representation using 1000 texts from WikiText-103.
+
+## Running Experiments
+
+To test the tradeoffs between symmetric and asymmetric autoencoder architectures:
+
+```bash
+python -m src.experiments.autoencoder_tradeoffs
+```
+
+This will train and evaluate 3 symmetric and 2 asymmetric architectures, with varying training times, and generate plots in the `experiment_results` directory.
 
 ## Running Benchmarks
 
@@ -93,10 +103,13 @@ The full experimental workflow involves:
 
 ## Results Visualization
 
-After running benchmarks, visualization files will be saved to the output directory:
-- `time_comparison.png`: Comparison of time to first token with and without compression
-- `compression_ratio.png`: Achieved compression ratio for different cache sizes
-- `speedup.png`: Speedup factor (baseline time / compressed time)
+After running experiments, visualization files will be saved to the output directory:
+- `compression_ratio_vs_quality.png`: Shows how compression ratio affects reconstruction quality
+- `encoder_size_vs_decompression_time.png`: Shows the relationship between encoder size and decompression speed
+- `encoder_size_vs_quality.png`: Shows how encoder size affects reconstruction quality
+- `speed_quality_tradeoff.png`: Shows the tradeoff between decompression speed and reconstruction quality
+- `quality_vs_size.png`: Shows how total model size affects reconstruction quality
+- `training_effect.png`: Shows the effect of training epochs on reconstruction quality
 
 ## Future Directions
 
@@ -114,7 +127,7 @@ If you use this code in your research, please cite:
 @misc{learned-kv-compression,
   author = {Ben Choi and Henry Huang},
   title = {Learned KV Cache Compression},
-  howpublished = {\url{https://github.com/yourusername/learned-kv-compression}},
+  howpublished = {\url{https://github.com/bjpchoi/lkvc}},
   note = {Harvard College}
 }
 ```
