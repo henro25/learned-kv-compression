@@ -1,8 +1,6 @@
 """
 Module Name: autoencoder.py
 Description: This module defines an Autoencoder model, which consists of an encoder that reduces the dimensionality of the input vector to a latent representation, and a decoder that reconstructs the original input from the latent representation.
-Author: Henry Huang
-Date: 2025-03-13
 """
 
 import torch
