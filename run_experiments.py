@@ -6,8 +6,6 @@ This script performs:
 1. Training autoencoders with different latent dimensions
 2. Running benchmarks on various KV cache sizes
 3. Creating visualizations of results
-Author: AI Assistant
-Date: 2023-04-03
 """
 
 import os
