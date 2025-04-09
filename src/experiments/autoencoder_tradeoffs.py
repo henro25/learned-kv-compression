@@ -4,9 +4,6 @@ Description: This module contains experiments to measure the tradeoffs between s
 for KV cache compression, specifically focusing on:
 1. Decompression speed (decoder-only inference time)
 2. Compression quality vs symmetric autoencoder using real KV cache data
-Author: Ben Choi (1), Henry Huang (2)
-(1) Harvard College
-(2) Harvard College
 """
 
 import torch
