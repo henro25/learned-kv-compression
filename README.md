@@ -1,1 +1,1 @@
-See project proposal PDF.
+Supporting code for evaluating learned KV compression with asymmetric autoencoders.
