@@ -27,7 +27,7 @@ def measure_decoder_speed(
     model: nn.Module,
     input_dim: int,
     latent_dim: int,
-    batch_size: int = 32,
+    batch_size: int = 128,
     num_runs: int = 1000  # Increased for better statistics
 ) -> Tuple[float, float]:
     """
@@ -130,7 +130,7 @@ def train_model(
     config_name: str,
     epochs: int = 1,
     learning_rate: float = 1e-3,
-    batch_size: int = 32
+    batch_size: int = 128
 ) -> nn.Module:
     """
     Train the model for the specified number of epochs.
@@ -200,9 +200,9 @@ def run_tradeoff_experiments(
     model_name: str = "distilgpt2",
     latent_dim: int = 192,  # 4x compression for distilgpt2
     hidden_dim: int = 512,
-    batch_size: int = 32,
-    num_runs: int = 100,  # Reduced from 1000
-    num_train_texts: int = 10,  # Reduced from 100
+    batch_size: int = 128,
+    num_runs: int = 10,  # Reduced from 1000
+    num_train_texts: int = 1,  # Reduced from 100
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 ) -> Dict:
     """
