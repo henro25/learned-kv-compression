@@ -1,8 +1,6 @@
 """
 Module Name: train.py
 Description: Train Autoencoder for KV Cache Compression. This module trains an autoencoder to compress the key-value (KV) cache extracted from a pretrained transformer model. It uses the WikiText-103 dataset to provide input texts, and a custom Buffer class to extract batches of KV vectors from the model's caching mechanism. The autoencoder is then optimized using a mean squared error reconstruction loss. Training progress is logged via TensorBoard, and model checkpoints are saved at the end of each epoch.
-Author: Henry Huang
-Date: 2025-03-13
 """
 
 import os
