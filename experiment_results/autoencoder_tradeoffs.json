@@ -1,0 +1,56 @@
+{
+  "sym_1": {
+    "mean_inference_time_ms": 0.03950842303780308,
+    "std_inference_time_ms": 0.020285686971765964,
+    "reconstruction_mse": 1.7089878976345063,
+    "compression_ratio": 0.3333333333333333,
+    "total_params": 24832,
+    "encoder_params": 12480,
+    "decoder_params": 12352
+  },
+  "sym_2": {
+    "mean_inference_time_ms": 0.17517850852544906,
+    "std_inference_time_ms": 0.08662713347235197,
+    "reconstruction_mse": 2.023322033882141,
+    "compression_ratio": 0.3333333333333333,
+    "total_params": 263424,
+    "encoder_params": 131776,
+    "decoder_params": 131648
+  },
+  "sym_3": {
+    "mean_inference_time_ms": 0.3299819419552037,
+    "std_inference_time_ms": 0.04205376681216162,
+    "reconstruction_mse": 2.0789528369903563,
+    "compression_ratio": 0.3333333333333333,
+    "total_params": 788736,
+    "encoder_params": 394432,
+    "decoder_params": 394304
+  },
+  "asym_1_1": {
+    "mean_inference_time_ms": 0.035068205493464705,
+    "std_inference_time_ms": 0.015648889080875514,
+    "reconstruction_mse": 2.3617434740066527,
+    "compression_ratio": 0.3333333333333333,
+    "total_params": 24832,
+    "encoder_params": 12480,
+    "decoder_params": 12352
+  },
+  "asym_2_1": {
+    "mean_inference_time_ms": 0.052585104207979814,
+    "std_inference_time_ms": 0.024013910996466138,
+    "reconstruction_mse": 2.134654712677002,
+    "compression_ratio": 0.3333333333333333,
+    "total_params": 144128,
+    "encoder_params": 131776,
+    "decoder_params": 12352
+  },
+  "asym_3_1": {
+    "mean_inference_time_ms": 0.059580363726327905,
+    "std_inference_time_ms": 0.022828007144115054,
+    "reconstruction_mse": 2.1145126581192017,
+    "compression_ratio": 0.3333333333333333,
+    "total_params": 406784,
+    "encoder_params": 394432,
+    "decoder_params": 12352
+  }
+}

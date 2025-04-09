@@ -1,0 +1,48 @@
+{
+  "baseline_perplexity": 86.18492889404297,
+  "compressed_perplexity": 2911.947265625,
+  "longbench_results": {
+    "baseline": {
+      "narrativeqa": 405.4547119140625,
+      "hotpotqa": 269.3837890625,
+      "2wikimqa": 420.951904296875,
+      "musique": 211.1696014404297,
+      "dureader": 68.05569458007812
+    },
+    "compressed": {
+      "narrativeqa": 2609.982421875,
+      "hotpotqa": 1869.2584228515625,
+      "2wikimqa": 2829.501953125,
+      "musique": 1308.406982421875,
+      "dureader": 2916.110107421875
+    }
+  },
+  "config": {
+    "name": "distilgpt2",
+    "input_dim": 64,
+    "latent_dim": 8,
+    "batch_size": 1024,
+    "num_epochs": 10,
+    "lr": 0.0001,
+    "seed": 42,
+    "head_dim": 64,
+    "buffer_mult": 2,
+    "num_hidden_layers": 6,
+    "lm_batch_size": 1,
+    "num_key_value_heads": 12,
+    "eval_interval": 100,
+    "config": "src/configs/default_config.json",
+    "output_dir": "models",
+    "num_train_texts": 1000,
+    "num_eval_texts": 100,
+    "device": "cuda",
+    "max_seq_len": 256,
+    "model_name": "distilgpt2",
+    "num_runs": 5,
+    "cache_sizes": [
+      1.0,
+      10.0,
+      100.0
+    ]
+  }
+}
