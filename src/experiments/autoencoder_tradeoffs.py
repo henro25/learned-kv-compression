@@ -82,7 +82,7 @@ def measure_decoder_speed(
 def measure_reconstruction_quality(
     model: nn.Module,
     buffer: Buffer,
-    num_batches: int = 10  # Number of batches to test
+    num_batches: int = 1  # Reduced number of batches
 ) -> float:
     """
     Measure reconstruction quality using MSE on real KV cache data.
@@ -157,9 +157,9 @@ def train_model(
         epoch_loss = 0.0
         batches = 0
         
-        # Progress bar for each epoch
-        with tqdm(total=100, desc=f"Epoch {epoch+1}/{epochs}") as pbar:
-            for i in range(100):  # Process 100 batches per epoch
+        # Progress bar for each epoch - reduced to 20 batches per epoch
+        with tqdm(total=20, desc=f"Epoch {epoch+1}/{epochs}") as pbar:
+            for i in range(20):  # Process only 20 batches per epoch (reduced from 100)
                 # Get a batch of real KV pairs
                 kvs, _ = buffer.next()
                 keys, values = kvs
@@ -201,8 +201,8 @@ def run_tradeoff_experiments(
     latent_dim: int = 192,  # 4x compression for distilgpt2
     hidden_dim: int = 512,
     batch_size: int = 32,
-    num_runs: int = 1000,
-    num_train_texts: int = 100,
+    num_runs: int = 100,  # Reduced from 1000
+    num_train_texts: int = 10,  # Reduced from 100
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 ) -> Dict:
     """
@@ -228,20 +228,20 @@ def run_tradeoff_experiments(
     head_dim = lm.config.hidden_size // lm.config.num_attention_heads
     input_dim = head_dim  # Each KV vector has dimension head_dim
     
-    # Load WikiText dataset
+    # Load WikiText dataset - use only 10 texts
     wiki_dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
     texts = [text for text in wiki_dataset["train"]["text"][:num_train_texts] if text.strip()]
     
-    # Create config for buffer
+    # Create config for buffer with reduced sequence length
     cfg = {
         "name": model_name,
         "batch_size": batch_size,
-        "buffer_mult": 4,
+        "buffer_mult": 2,  # Reduced from 4
         "lm_batch_size": 1,
         "num_hidden_layers": lm.config.num_hidden_layers,
         "num_key_value_heads": lm.config.num_attention_heads,
         "head_dim": head_dim,
-        "max_seq_len": 128,
+        "max_seq_len": 64,  # Reduced from 128
         "device": device
     }
     
@@ -262,18 +262,12 @@ def run_tradeoff_experiments(
         "name": f"sym_2",
         "encoder_depth": 2,
         "decoder_depth": 2,
-        "train_epochs": 3  # Train for longer
+        "train_epochs": 1  # Reduced from 3
     })
-    configs.append({
-        "name": f"sym_3",
-        "encoder_depth": 3,
-        "decoder_depth": 3,
-        "train_epochs": 5  # Train for even longer
-    })
+
     
     # Asymmetric configurations (deep encoder, shallow decoder)
-    # Skip asym_1_1
-    for encoder_depth in [2, 3, 4, 5, 6, 7]:
+    for encoder_depth in [2, 3, 4, 5]:
         configs.append({
             "name": f"asym_{encoder_depth}_1",
             "encoder_depth": encoder_depth,
@@ -312,7 +306,7 @@ def run_tradeoff_experiments(
         
         # Measure reconstruction quality on real data
         mse = measure_reconstruction_quality(
-            model, buffer, num_batches=10
+            model, buffer, num_batches=1  # Reduced from 10
         )
         
         # Store results
