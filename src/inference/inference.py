@@ -3,8 +3,6 @@ Module Name: inference.py
 Description: Inference module for KV Cache compression benchmarking. This module contains utilities
 for running inference with LLMs, generating KV cache of different sizes, compressing and decompressing
 the KV cache, and measuring performance metrics like time to first token.
-Author: AI Assistant
-Date: 2023-04-03
 """
 
 import os
