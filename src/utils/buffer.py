@@ -1,8 +1,6 @@
 """
 Module Name: buffer.py
 Description: Buffer Module for KV Cache Extraction. This module defines a Buffer class designed to extract and store key-value (KV) vectors and queries from a transformer model's caching mechanism for the purpose of training an autoencoder for KV cache compression. It operates by processing a small batch of texts, encoding them using a pretrained language model, extracting the keys, values, and queries from each transformer layer, and then storing them in preallocated buffers for later use during training.
-Author: Henry Huang
-Date: 2025-03-13
 """
 
 import random
