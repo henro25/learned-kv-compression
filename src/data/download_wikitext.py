@@ -1,8 +1,6 @@
 """
 Module Name: download_wikitext.py
 Description: Script to download and prepare the WikiText dataset.
-Author: Ben Choi
-Date: 2025-04-08
 """
 
 import os
