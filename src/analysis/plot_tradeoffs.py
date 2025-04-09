@@ -1,7 +1,6 @@
 """
 Module Name: plot_tradeoffs.py
 Description: This module generates plots for the autoencoder tradeoff experiments
-Author: Ben Choi
 """
 
 import json
