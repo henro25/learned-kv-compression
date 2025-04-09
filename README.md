@@ -2,13 +2,6 @@
 
 This repository contains code for compressing the KV cache in transformer-based language models using learned autoencoders. The key insight is that we can use asymmetric autoencoders (deep encoder, shallow decoder) to achieve better compression quality while maintaining fast decompression speeds.
 
-## Authors
-
-- Ben Choi (1)
-- Henry Huang (2)
-
-(1) Harvard College  
-(2) Harvard College
 
 ## Project Overview
 
