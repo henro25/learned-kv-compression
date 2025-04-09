@@ -4,24 +4,24 @@ Description: This module contains experiments to measure the tradeoffs between s
 for KV cache compression, specifically focusing on:
 1. Decompression speed (decoder-only inference time)
 2. Compression quality vs symmetric autoencoder using real KV cache data
+Author: Ben Choi (1), Henry Huang (2)
+(1) Harvard College
+(2) Harvard College
 """
 
 import torch
 import torch.nn as nn
 import time
 import numpy as np
-from typing import Tuple, Dict, List
+from typing import Tuple, Dict
 import json
 from pathlib import Path
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
-import os
 
 from src.models.autoencoder import Autoencoder
 from src.utils.buffer import Buffer
-from src.evaluation.metrics import calculate_mse
-from src.inference.benchmark import run_benchmark
 
 def measure_decoder_speed(
     model: nn.Module,
@@ -124,111 +124,213 @@ def measure_reconstruction_quality(
     
     return total_mse / total_samples
 
-def run_tradeoff_experiments(
-    model_name: str = "meta-llama/Llama-2-7b-hf",
-    latent_dim: int = 16,
-    batch_size: int = 1024,
-    num_runs: int = 5,
-    output_dir: str = "experiment_results"
-) -> Dict:
+def train_model(
+    model: nn.Module,
+    buffer: Buffer,
+    config_name: str,
+    epochs: int = 1,
+    learning_rate: float = 1e-3,
+    batch_size: int = 32
+) -> nn.Module:
     """
-    Run experiments to evaluate tradeoffs between different autoencoder architectures.
+    Train the model for the specified number of epochs.
     
     Args:
-        model_name: Name of the base model to use
-        latent_dim: Dimension of the latent space
-        batch_size: Batch size for inference
-        num_runs: Number of runs for each configuration
-        output_dir: Directory to save results
+        model: The autoencoder model to train
+        buffer: Buffer containing training data
+        config_name: Name of the model configuration
+        epochs: Number of epochs to train
+        learning_rate: Learning rate for optimization
+        batch_size: Batch size for training
         
     Returns:
-        Dictionary containing experiment results
+        Trained model
     """
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    criterion = nn.MSELoss()
     
-    # Test different symmetric configurations (1, 2, 3)
-    symmetric_configs = [
-        {"name": "sym1", "encoder_depth": 1, "decoder_depth": 1, "num_epochs": 5, "learning_rate": 1e-3},
-        {"name": "sym2", "encoder_depth": 2, "decoder_depth": 2, "num_epochs": 10, "learning_rate": 1e-3},
-        {"name": "sym3", "encoder_depth": 3, "decoder_depth": 3, "num_epochs": 15, "learning_rate": 1e-3}
-    ]
+    print(f"\nTraining {config_name} for {epochs} epochs...")
+    model.train()
     
-    # Test different asymmetric configurations (encoder 2-7, decoder fixed at 1)
-    asymmetric_configs = [
-        {"name": "asym2", "encoder_depth": 2, "decoder_depth": 1, "num_epochs": 10, "learning_rate": 1e-3},
-        {"name": "asym3", "encoder_depth": 3, "decoder_depth": 1, "num_epochs": 10, "learning_rate": 1e-3},
-        {"name": "asym4", "encoder_depth": 4, "decoder_depth": 1, "num_epochs": 10, "learning_rate": 1e-3},
-        {"name": "asym5", "encoder_depth": 5, "decoder_depth": 1, "num_epochs": 10, "learning_rate": 1e-3},
-        {"name": "asym6", "encoder_depth": 6, "decoder_depth": 1, "num_epochs": 10, "learning_rate": 1e-3},
-        {"name": "asym7", "encoder_depth": 7, "decoder_depth": 1, "num_epochs": 10, "learning_rate": 1e-3}
-    ]
+    # Training loop
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+        batches = 0
+        
+        # Progress bar for each epoch
+        with tqdm(total=100, desc=f"Epoch {epoch+1}/{epochs}") as pbar:
+            for i in range(100):  # Process 100 batches per epoch
+                # Get a batch of real KV pairs
+                kvs, _ = buffer.next()
+                keys, values = kvs
+                
+                # Flatten for processing
+                keys_flat = keys.reshape(-1, keys.size(-1))
+                values_flat = values.reshape(-1, values.size(-1))
+                
+                # Train on keys
+                optimizer.zero_grad()
+                k_recon, _ = model(keys_flat)
+                k_loss = criterion(k_recon, keys_flat)
+                k_loss.backward()
+                optimizer.step()
+                
+                # Train on values
+                optimizer.zero_grad()
+                v_recon, _ = model(values_flat)
+                v_loss = criterion(v_recon, values_flat)
+                v_loss.backward()
+                optimizer.step()
+                
+                # Track loss
+                batch_loss = (k_loss.item() + v_loss.item()) / 2
+                epoch_loss += batch_loss
+                batches += 1
+                
+                # Update progress bar
+                pbar.update(1)
+                pbar.set_postfix(loss=batch_loss)
+        
+        # Print epoch results
+        print(f"Epoch {epoch+1} loss: {epoch_loss/batches:.6f}")
     
-    results = {
-        "symmetric": [],
-        "asymmetric": []
+    return model
+
+def run_tradeoff_experiments(
+    model_name: str = "distilgpt2",
+    latent_dim: int = 192,  # 4x compression for distilgpt2
+    hidden_dim: int = 512,
+    batch_size: int = 32,
+    num_runs: int = 1000,
+    num_train_texts: int = 100,
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+) -> Dict:
+    """
+    Run experiments comparing symmetric and asymmetric autoencoders using real KV cache data.
+    """
+    results = {}
+    
+    # Load model and tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    lm = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch.float32,
+        device_map={"": device},
+        output_hidden_states=True,
+        output_attentions=True,
+        use_cache=True
+    )
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    lm.eval()
+    
+    # Get model dimensions
+    head_dim = lm.config.hidden_size // lm.config.num_attention_heads
+    input_dim = head_dim  # Each KV vector has dimension head_dim
+    
+    # Load WikiText dataset
+    wiki_dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
+    texts = [text for text in wiki_dataset["train"]["text"][:num_train_texts] if text.strip()]
+    
+    # Create config for buffer
+    cfg = {
+        "name": model_name,
+        "batch_size": batch_size,
+        "buffer_mult": 4,
+        "lm_batch_size": 1,
+        "num_hidden_layers": lm.config.num_hidden_layers,
+        "num_key_value_heads": lm.config.num_attention_heads,
+        "head_dim": head_dim,
+        "max_seq_len": 128,
+        "device": device
     }
     
-    # Test all configurations with progress bar
-    all_configs = symmetric_configs + asymmetric_configs
-    for config in tqdm(all_configs, desc="Testing configurations"):
-        # Create autoencoder with current configuration
-        autoencoder = Autoencoder(
-            input_dim=4096,  # Llama-2-7b hidden size
+    # Initialize buffer with real KV cache data
+    buffer = Buffer(cfg, lm, tokenizer, texts)
+    
+    # Define model configurations - 3 symmetric and 2 asymmetric
+    configs = []
+    
+    # Symmetric configurations (depths 1, 2, 3)
+    configs.append({
+        "name": f"sym_1",
+        "encoder_depth": 1,
+        "decoder_depth": 1,
+        "train_epochs": 1
+    })
+    configs.append({
+        "name": f"sym_2",
+        "encoder_depth": 2,
+        "decoder_depth": 2,
+        "train_epochs": 3  # Train for longer
+    })
+    configs.append({
+        "name": f"sym_3",
+        "encoder_depth": 3,
+        "decoder_depth": 3,
+        "train_epochs": 5  # Train for even longer
+    })
+    
+    # Asymmetric configurations (deep encoder, shallow decoder)
+    # Skip asym_1_1
+    for encoder_depth in [2, 3, 4, 5, 6, 7]:
+        configs.append({
+            "name": f"asym_{encoder_depth}_1",
+            "encoder_depth": encoder_depth,
+            "decoder_depth": 1,  # Fixed shallow decoder
+            "train_epochs": 1
+        })
+    
+    # Run experiments with progress bar
+    for config in tqdm(configs, desc="Testing configurations"):
+        print(f"\nTesting configuration: {config['name']}")
+        
+        # Create model
+        model = Autoencoder(
+            input_dim=input_dim,
             latent_dim=latent_dim,
             encoder_depth=config["encoder_depth"],
-            decoder_depth=config["decoder_depth"]
-        )
+            decoder_depth=config["decoder_depth"],
+            hidden_dim=hidden_dim
+        ).to(device)
         
-        # Train autoencoder with adjusted parameters
-        autoencoder.train(
-            num_epochs=config["num_epochs"],
-            learning_rate=config["learning_rate"],
-            batch_size=batch_size
-        )
-        
-        # Measure decompression time and reconstruction quality
-        decompression_times = []
-        reconstruction_qualities = []
-        
-        for _ in range(num_runs):
-            # Run benchmark with current configuration
-            benchmark_results = run_benchmark(
-                model_name=model_name,
-                autoencoder=autoencoder,
+        # Train the model if specified
+        if config.get("train_epochs", 0) > 0:
+            model = train_model(
+                model, 
+                buffer, 
+                config["name"],
+                epochs=config["train_epochs"],
+                learning_rate=1e-3,
                 batch_size=batch_size
             )
-            
-            decompression_times.append(benchmark_results["mean_decompression_time"])
-            reconstruction_qualities.append(benchmark_results["mean_reconstruction_quality"])
         
-        # Calculate mean and std for metrics
-        mean_decompression_time = np.mean(decompression_times)
-        std_decompression_time = np.std(decompression_times)
-        mean_reconstruction_quality = np.mean(reconstruction_qualities)
-        std_reconstruction_quality = np.std(reconstruction_qualities)
+        # Measure decoder-only speed (decompression time)
+        mean_time, std_time = measure_decoder_speed(
+            model, input_dim, latent_dim, batch_size, num_runs
+        )
+        
+        # Measure reconstruction quality on real data
+        mse = measure_reconstruction_quality(
+            model, buffer, num_batches=10
+        )
         
         # Store results
-        result = {
-            "name": config["name"],
-            "encoder_depth": config["encoder_depth"],
-            "decoder_depth": config["decoder_depth"],
-            "num_parameters": autoencoder.get_num_parameters(),
-            "mean_decompression_time": mean_decompression_time,
-            "std_decompression_time": std_decompression_time,
-            "mean_reconstruction_quality": mean_reconstruction_quality,
-            "std_reconstruction_quality": std_reconstruction_quality
+        results[config["name"]] = {
+            "mean_inference_time_ms": mean_time,
+            "std_inference_time_ms": std_time,
+            "reconstruction_mse": mse,
+            "compression_ratio": input_dim / latent_dim,
+            "total_params": sum(p.numel() for p in model.parameters()),
+            "encoder_params": sum(p.numel() for p in model.encoder.parameters()),
+            "decoder_params": sum(p.numel() for p in model.decoder.parameters()),
+            "train_epochs": config.get("train_epochs", 0)
         }
         
-        if config in symmetric_configs:
-            results["symmetric"].append(result)
-        else:
-            results["asymmetric"].append(result)
-    
-    # Save results
-    output_path = os.path.join(output_dir, "autoencoder_tradeoffs.json")
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
+        # Print progress
+        print(f"  Decompression time: {mean_time:.3f} ± {std_time:.3f} ms")
+        print(f"  Reconstruction MSE: {mse:.6f}")
+        print(f"  Parameters: {results[config['name']]['total_params']:,}")
     
     return results
 
@@ -254,21 +356,23 @@ def main():
     print("\nSymmetric Models:")
     for name, metrics in sorted(symmetric.items()):
         print(f"\n{name}:")
-        print(f"  Decompression Time: {metrics['mean_decompression_time']:.3f} ± {metrics['std_decompression_time']:.3f} ms")
-        print(f"  Reconstruction MSE: {metrics['mean_reconstruction_quality']:.6f}")
-        print(f"  Parameters: {metrics['num_parameters']:,}")
+        print(f"  Trained for {metrics['train_epochs']} epochs")
+        print(f"  Decompression Time: {metrics['mean_inference_time_ms']:.3f} ± {metrics['std_inference_time_ms']:.3f} ms")
+        print(f"  Reconstruction MSE: {metrics['reconstruction_mse']:.6f}")
+        print(f"  Decoder Parameters: {metrics['decoder_params']:,}")
     
     print("\nAsymmetric Models:")
     for name, metrics in sorted(asymmetric.items()):
         print(f"\n{name}:")
-        print(f"  Decompression Time: {metrics['mean_decompression_time']:.3f} ± {metrics['std_decompression_time']:.3f} ms")
-        print(f"  Reconstruction MSE: {metrics['mean_reconstruction_quality']:.6f}")
-        print(f"  Parameters: {metrics['num_parameters']:,}")
+        print(f"  Trained for {metrics['train_epochs']} epochs")
+        print(f"  Decompression Time: {metrics['mean_inference_time_ms']:.3f} ± {metrics['std_inference_time_ms']:.3f} ms")
+        print(f"  Reconstruction MSE: {metrics['reconstruction_mse']:.6f}")
+        print(f"  Decoder Parameters: {metrics['decoder_params']:,}")
     
     # Verify decoder consistency
     print("\nVerifying Decoder Consistency:")
-    asym_times = [m["mean_decompression_time"] for m in asymmetric.values()]
-    asym_std = [m["std_decompression_time"] for m in asymmetric.values()]
+    asym_times = [m["mean_inference_time_ms"] for m in asymmetric.values()]
+    asym_std = [m["std_inference_time_ms"] for m in asymmetric.values()]
     time_variation = np.std(asym_times)
     print(f"Asymmetric model decompression time variation: {time_variation:.6f} ms")
     if time_variation < 0.1:  # Less than 0.1ms variation

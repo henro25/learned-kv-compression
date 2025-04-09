@@ -17,119 +17,6 @@ def load_results():
     with open("experiment_results/autoencoder_tradeoffs.json", "r") as f:
         return json.load(f)
 
-def plot_decompression_time_vs_depth(results):
-    """Plot decompression time vs model depth as a bar chart."""
-    plt.figure(figsize=(12, 6))
-    sns.set_style("whitegrid")
-    
-    # Extract data
-    sym_depths = []
-    sym_times = []
-    sym_stds = []
-    asym_depths = []
-    asym_times = []
-    asym_stds = []
-    
-    for name, data in results.items():
-        if name.startswith("sym_"):
-            depth = int(name.split("_")[1])
-            sym_depths.append(depth)
-            sym_times.append(data["mean_inference_time_ms"])
-            sym_stds.append(data["std_inference_time_ms"])
-        elif name.startswith("asym_"):
-            depth = int(name.split("_")[1])
-            asym_depths.append(depth)
-            asym_times.append(data["mean_inference_time_ms"])
-            asym_stds.append(data["std_inference_time_ms"])
-    
-    # Plot
-    x = np.arange(len(sym_depths) + len(asym_depths))
-    width = 0.35
-    
-    # Plot symmetric models
-    plt.bar(x[:len(sym_depths)], sym_times, width, yerr=sym_stds, 
-            capsize=5, label='Symmetric', color='skyblue')
-    
-    # Plot asymmetric models
-    plt.bar(x[len(sym_depths):], asym_times, width, yerr=asym_stds,
-            capsize=5, label='Asymmetric', color='salmon')
-    
-    # Add labels
-    labels = [f'sym_{d}' for d in sym_depths] + [f'asym_{d}_1' for d in asym_depths]
-    plt.xticks(x, labels, rotation=45)
-    
-    plt.xlabel("Model Configuration", fontsize=12)
-    plt.ylabel("Decompression Time (ms)", fontsize=12)
-    plt.title("Decompression Time vs Model Depth", fontsize=14)
-    plt.legend(fontsize=12)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig("experiment_results/decompression_time_vs_depth.png", dpi=300, bbox_inches='tight')
-    plt.close()
-
-def plot_parameter_distribution(results):
-    """Plot parameter distribution between encoder and decoder with logarithmic scale."""
-    plt.figure(figsize=(12, 6))
-    sns.set_style("whitegrid")
-    
-    # Extract data
-    names = []
-    encoder_params = []
-    decoder_params = []
-    
-    for name, data in results.items():
-        names.append(name)
-        encoder_params.append(data["encoder_params"])
-        decoder_params.append(data["decoder_params"])
-    
-    x = np.arange(len(names))
-    width = 0.35
-    
-    plt.bar(x - width/2, encoder_params, width, label='Encoder', color='skyblue')
-    plt.bar(x + width/2, decoder_params, width, label='Decoder', color='salmon')
-    
-    plt.xlabel("Model Configuration", fontsize=12)
-    plt.ylabel("Number of Parameters (log scale)", fontsize=12)
-    plt.title("Parameter Distribution", fontsize=14)
-    plt.xticks(x, names, rotation=45)
-    plt.yscale('log')  # Set logarithmic scale
-    plt.legend(fontsize=12)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig("experiment_results/parameter_distribution.png", dpi=300, bbox_inches='tight')
-    plt.close()
-
-def plot_mse_comparison(results):
-    """Plot MSE comparison across all models."""
-    plt.figure(figsize=(12, 6))
-    sns.set_style("whitegrid")
-    
-    # Extract data
-    names = []
-    mse_values = []
-    
-    for name, data in results.items():
-        names.append(name)
-        mse_values.append(data["reconstruction_mse"])
-    
-    # Sort by MSE
-    sorted_indices = np.argsort(mse_values)
-    names = [names[i] for i in sorted_indices]
-    mse_values = [mse_values[i] for i in sorted_indices]
-    
-    # Plot
-    x = np.arange(len(names))
-    plt.bar(x, mse_values, color='skyblue')
-    
-    plt.xlabel("Model Configuration", fontsize=12)
-    plt.ylabel("Reconstruction MSE", fontsize=12)
-    plt.title("Reconstruction MSE Comparison", fontsize=14)
-    plt.xticks(x, names, rotation=45)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig("experiment_results/mse_comparison.png", dpi=300, bbox_inches='tight')
-    plt.close()
-
 def plot_compression_ratio_vs_quality(results):
     """Plot compression ratio vs reconstruction quality."""
     plt.figure(figsize=(10, 6))
@@ -159,7 +46,8 @@ def plot_compression_ratio_vs_quality(results):
     for i, (x, y) in enumerate(zip(sym_ratios, sym_quality)):
         plt.annotate(f'sym_{i+1}', (x, y), xytext=(5, 5), textcoords='offset points')
     for i, (x, y) in enumerate(zip(asym_ratios, asym_quality)):
-        plt.annotate(f'asym_{i+1}_1', (x, y), xytext=(5, 5), textcoords='offset points')
+        depth = i+2  # Since we removed asym_1_1, we start from 2
+        plt.annotate(f'asym_{depth}_1', (x, y), xytext=(5, 5), textcoords='offset points')
     
     plt.xlabel("Compression Ratio", fontsize=12)
     plt.ylabel("Reconstruction MSE", fontsize=12)
@@ -199,7 +87,8 @@ def plot_encoder_size_vs_decompression_time(results):
     for i, (x, y) in enumerate(zip(sym_sizes, sym_times)):
         plt.annotate(f'sym_{i+1}', (x, y), xytext=(5, 5), textcoords='offset points')
     for i, (x, y) in enumerate(zip(asym_sizes, asym_times)):
-        plt.annotate(f'asym_{i+1}_1', (x, y), xytext=(5, 5), textcoords='offset points')
+        depth = i+2  # Since we removed asym_1_1, we start from 2
+        plt.annotate(f'asym_{depth}_1', (x, y), xytext=(5, 5), textcoords='offset points')
     
     plt.xlabel("Encoder Parameters", fontsize=12)
     plt.ylabel("Decompression Time (ms)", fontsize=12)
@@ -239,7 +128,8 @@ def plot_encoder_size_vs_quality(results):
     for i, (x, y) in enumerate(zip(sym_sizes, sym_quality)):
         plt.annotate(f'sym_{i+1}', (x, y), xytext=(5, 5), textcoords='offset points')
     for i, (x, y) in enumerate(zip(asym_sizes, asym_quality)):
-        plt.annotate(f'asym_{i+1}_1', (x, y), xytext=(5, 5), textcoords='offset points')
+        depth = i+2  # Since we removed asym_1_1, we start from 2
+        plt.annotate(f'asym_{depth}_1', (x, y), xytext=(5, 5), textcoords='offset points')
     
     plt.xlabel("Encoder Parameters", fontsize=12)
     plt.ylabel("Reconstruction MSE", fontsize=12)
@@ -279,7 +169,8 @@ def plot_speed_quality_tradeoff(results):
     for i, (x, y) in enumerate(zip(sym_times, sym_quality)):
         plt.annotate(f'sym_{i+1}', (x, y), xytext=(5, 5), textcoords='offset points')
     for i, (x, y) in enumerate(zip(asym_times, asym_quality)):
-        plt.annotate(f'asym_{i+1}_1', (x, y), xytext=(5, 5), textcoords='offset points')
+        depth = i+2  # Since we removed asym_1_1, we start from 2
+        plt.annotate(f'asym_{depth}_1', (x, y), xytext=(5, 5), textcoords='offset points')
     
     plt.xlabel("Decompression Time (ms)", fontsize=12)
     plt.ylabel("Reconstruction MSE", fontsize=12)
@@ -319,7 +210,8 @@ def plot_quality_vs_size(results):
     for i, (x, y) in enumerate(zip(sym_sizes, sym_quality)):
         plt.annotate(f'sym_{i+1}', (x, y), xytext=(5, 5), textcoords='offset points')
     for i, (x, y) in enumerate(zip(asym_sizes, asym_quality)):
-        plt.annotate(f'asym_{i+1}_1', (x, y), xytext=(5, 5), textcoords='offset points')
+        depth = i+2  # Since we removed asym_1_1, we start from 2
+        plt.annotate(f'asym_{depth}_1', (x, y), xytext=(5, 5), textcoords='offset points')
     
     plt.xlabel("Total Model Parameters", fontsize=12)
     plt.ylabel("Reconstruction MSE", fontsize=12)
@@ -332,7 +224,7 @@ def plot_quality_vs_size(results):
 
 def plot_inference_time_comparison(results):
     """Plot comparison of inference times."""
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(10, 6))
     sns.set_style("whitegrid")
     
     # Extract data
@@ -340,7 +232,7 @@ def plot_inference_time_comparison(results):
     times = []
     stds = []
     
-    for name, data in results.items():
+    for name, data in sorted(results.items()):
         names.append(name)
         times.append(data["mean_inference_time_ms"])
         stds.append(data["std_inference_time_ms"])
@@ -358,20 +250,59 @@ def plot_inference_time_comparison(results):
     plt.savefig("experiment_results/inference_time_comparison.png", dpi=300, bbox_inches='tight')
     plt.close()
 
+def plot_training_effect(results):
+    """Plot the effect of training epochs on reconstruction quality."""
+    plt.figure(figsize=(10, 6))
+    sns.set_style("whitegrid")
+    
+    # Extract data for symmetric models
+    depths = []
+    epochs = []
+    quality = []
+    
+    for name, data in results.items():
+        if name.startswith("sym_"):
+            depth = int(name.split("_")[1])
+            depths.append(depth)
+            epochs.append(data["train_epochs"])
+            quality.append(data["reconstruction_mse"])
+    
+    # Create a colormap based on training epochs
+    cmap = plt.cm.viridis
+    norm = plt.Normalize(min(epochs), max(epochs))
+    colors = cmap(norm(epochs))
+    
+    # Plot
+    scatter = plt.scatter(depths, quality, s=150, c=colors, marker='o')
+    
+    # Add colorbar
+    cbar = plt.colorbar(scatter)
+    cbar.set_label('Training Epochs', fontsize=12)
+    
+    # Add labels
+    for i, (x, y, e) in enumerate(zip(depths, quality, epochs)):
+        plt.annotate(f'sym_{x} ({e} epochs)', (x, y), xytext=(5, 5), textcoords='offset points')
+    
+    plt.xlabel("Model Depth", fontsize=12)
+    plt.ylabel("Reconstruction MSE", fontsize=12)
+    plt.title("Effect of Training on Reconstruction Quality", fontsize=14)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig("experiment_results/training_effect.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
 def main():
     """Generate all plots."""
     results = load_results()
     
     # Create plots
-    plot_decompression_time_vs_depth(results)
-    plot_parameter_distribution(results)
-    plot_mse_comparison(results)
     plot_compression_ratio_vs_quality(results)
     plot_encoder_size_vs_decompression_time(results)
     plot_encoder_size_vs_quality(results)
     plot_speed_quality_tradeoff(results)
     plot_quality_vs_size(results)
     plot_inference_time_comparison(results)
+    plot_training_effect(results)
     
     print("All plots generated successfully!")
 

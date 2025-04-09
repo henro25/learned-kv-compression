@@ -1,14 +1,12 @@
 """
 Module Name: autoencoder.py
-Description: This module defines an Autoencoder model for KV cache compression.
-Author: Ben Choi, Henry Huang
-Date: 2025-04-08
+Description: This module defines an Autoencoder model, which consists of an encoder that reduces the dimensionality of the input vector to a latent representation, and a decoder that reconstructs the original input from the latent representation.
+Author: Henry Huang
+Date: 2025-03-13
 """
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from tqdm import tqdm
 
 class Autoencoder(nn.Module):
     def __init__(self, input_dim, latent_dim, encoder_depth=1, decoder_depth=1, hidden_dim=None):
@@ -56,62 +54,6 @@ class Autoencoder(nn.Module):
         z = self.encoder(x)
         x_recon = self.decoder(z)
         return x_recon, z
-    
-    def train(self, num_epochs=10, learning_rate=1e-3, batch_size=1024):
-        """
-        Train the autoencoder.
-        
-        Args:
-            num_epochs: Number of training epochs
-            learning_rate: Learning rate for optimization
-            batch_size: Batch size for training
-            
-        Returns:
-            List of training losses
-        """
-        device = next(self.parameters()).device
-        optimizer = optim.Adam(self.parameters(), lr=learning_rate)
-        criterion = nn.MSELoss()
-        
-        # Generate synthetic training data
-        # For now, we'll use random data. In practice, you'd use real KV cache data
-        num_samples = 10000
-        train_data = torch.randn(num_samples, self.encoder[0].in_features).to(device)
-        
-        losses = []
-        for epoch in range(num_epochs):
-            self.train()
-            total_loss = 0
-            num_batches = num_samples // batch_size
-            
-            for i in range(num_batches):
-                # Get batch
-                start_idx = i * batch_size
-                end_idx = start_idx + batch_size
-                batch = train_data[start_idx:end_idx]
-                
-                # Forward pass
-                recon, _ = self(batch)
-                loss = criterion(recon, batch)
-                
-                # Backward pass
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                
-                total_loss += loss.item()
-            
-            avg_loss = total_loss / num_batches
-            losses.append(avg_loss)
-            
-            if (epoch + 1) % 5 == 0:
-                print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.6f}")
-        
-        return losses
-    
-    def get_num_parameters(self):
-        """Get total number of parameters in the model."""
-        return sum(p.numel() for p in self.parameters())
 
 if __name__ == "__main__":
     # Quick test
