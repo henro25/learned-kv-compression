@@ -3,8 +3,6 @@ Module Name: compare_results.py
 Description: Script to compare and visualize results from multiple KV cache compression experiments.
 This generates comparative plots of time to first token, compression ratio, and speedup
 across different latent dimensions and cache sizes.
-Author: AI Assistant
-Date: 2023-04-03
 """
 
 import os
