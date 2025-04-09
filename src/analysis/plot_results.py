@@ -2,7 +2,6 @@
 Module Name: plot_results.py
 Description: This module generates plots to visualize the autoencoder experiment results
 for KV cache compression using DistilGPT-2 data.
-Author: Ben Choi
 """
 
 import json
