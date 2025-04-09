@@ -1,8 +1,6 @@
 """
 Module Name: benchmark.py
 Description: Benchmark script for KV Cache compression using actual KV cache data.
-Author: Ben Choi
-Date: 2025-04-08
 """
 
 import argparse
