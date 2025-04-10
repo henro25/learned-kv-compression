@@ -51,6 +51,7 @@ def parse_args():
     parser.add_argument("--num_train_texts", type=int, default=1000, help="Number of training texts to use")
     parser.add_argument("--num_eval_texts", type=int, default=100, help="Number of evaluation texts to use")
     parser.add_argument("--dtype", type=str, default="f32", help="Data type for training and inference")
+    parser.add_argument("--buffer_size", type=int, default=512, help="Maximum sequence length to use in the buffer")
     return vars(parser.parse_args())
 
 def visualize_attention_differences(original_attn, recon_attn, layer_idx, head_idx, save_path=None):

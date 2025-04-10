@@ -8,7 +8,7 @@
   "seed": 42,
   "head_dim": 128,
   "buffer_mult": 2,
-  "num_hidden_layers": 32,
+  "num_hidden_layers": 28,
   "lm_batch_size": 1,
   "num_key_value_heads": 32,
   "eval_interval": 100,
@@ -20,6 +20,7 @@
   "max_seq_len": 8192,
   "hidden_size": 4096,
   "vocab_size": 151936,
+  "dtype": "bf16",
   "model_name": "Qwen/Qwen2.5-7B",
   "num_runs": 2,
   "cache_sizes": [

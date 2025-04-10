@@ -38,6 +38,8 @@ def parse_args():
                         help="Number of runs for timing statistics")
     parser.add_argument("--dtype", type=str, nargs="+", default=["f32"],
                         help="Data type for training and inference")
+    parser.add_argument("--buffer_size", type=int, default=512,
+                        help="Maximum sequence length to use in the buffer (to reduce memory usage)")
     parser.add_argument("--skip_training", action="store_true",
                         help="Skip training and use existing models")
     parser.add_argument("--output_dir", type=str, default="experiment_results",
@@ -68,7 +70,8 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
         "num_epochs": num_epochs,
         "num_train_texts": num_train_texts,
         "output_dir": model_dir,
-        "dtype": data_type  # Use the data_type parameter instead of cfg["dtype"]
+        "dtype": data_type,  # Use the data_type parameter instead of cfg["dtype"]
+        "buffer_size": cfg["buffer_size"]  # Pass buffer_size from config
     })
     
     # Save updated config
@@ -84,7 +87,8 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
         "--num_epochs", str(num_epochs),
         "--num_train_texts", str(num_train_texts),
         "--output_dir", model_dir,
-        "--dtype", data_type  # Use the data_type parameter instead of cfg["dtype"]
+        "--dtype", data_type,  # Use the data_type parameter instead of cfg["dtype"]
+        "--buffer_size", str(cfg["buffer_size"])  # Pass buffer_size from config
     ]
     
     print(f"\n{'='*80}")
@@ -98,7 +102,7 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
 
 def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int, 
                  cache_sizes: List[float], batch_size: int, num_runs: int, 
-                 output_dir: str, cfg: Dict[str, Any], data_type: str) -> str:
+                 output_dir: str, cfg: Dict[str, Any], data_type: str, buffer_size: int) -> str:
     """Run benchmarks with the trained autoencoder."""
     safe_model_name = model_name.replace("/", "_")
     result_dir = os.path.join(output_dir, f"benchmark_{safe_model_name}_latent{latent_dim}_batch{batch_size}_runs{num_runs}")
@@ -112,7 +116,8 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
         "batch_size": batch_size,
         "num_runs": num_runs,
         "cache_sizes": cache_sizes,
-        "data_type": data_type
+        "data_type": data_type,
+        "buffer_size": buffer_size  # Pass buffer_size from config
     })
     
     # Save updated config
@@ -131,7 +136,8 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
         "--num_runs", str(num_runs),
         "--output", result_dir,
         "--config", config_path,
-        "--dtype", data_type
+        "--dtype", data_type,
+        "--buffer_size", str(buffer_size)  # Pass buffer_size as command-line arg
     ]
     
     print(f"\n{'='*80}")
@@ -180,8 +186,13 @@ def main():
     print(f"Batch sizes: {batch_sizes}")
     print(f"Number of runs: {num_runs_list}")
     print(f"Data types: {data_types}")
+    print(f"Buffer size: {args.buffer_size}")
+    
     # Load base configuration
     cfg = load_config(args.config)
+    
+    # Add buffer_size to config
+    cfg["buffer_size"] = args.buffer_size
     
     # Record experiment start time
     start_time = time.time()
@@ -232,7 +243,8 @@ def main():
                                 num_runs=num_runs,
                                 output_dir=args.output_dir,
                                 cfg=cfg,
-                                data_type=data_types[0]
+                                data_type=data_types[0],
+                                buffer_size=args.buffer_size
                             )
                             
                             all_results.append({

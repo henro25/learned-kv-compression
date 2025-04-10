@@ -20,5 +20,6 @@
   "max_seq_len": 8192,
   "hidden_size": 4096,
   "vocab_size": 151936,
-  "dtype": "bf16"
+  "dtype": "bf16",
+  "buffer_size": 512
 }

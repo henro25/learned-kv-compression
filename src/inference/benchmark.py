@@ -259,16 +259,32 @@ def run_benchmark(
     num_runs: int,
     output_dir: str,
     cfg: Dict,
-    data_type: str
+    data_type: str,
+    buffer_size: int = 512
 ) -> str:
     """Run benchmarks with the trained autoencoder."""
     safe_model_name = model_name.replace("/", "_")
     result_dir = os.path.join(output_dir, f"benchmark_{safe_model_name}_latent{latent_dim}")
     os.makedirs(result_dir, exist_ok=True)
     
+    # Update buffer size in config
+    cfg["buffer_size"] = buffer_size
+    
     # Set device
     device = torch.device(cfg["device"])
-    dtype = torch.bfloat16 if cfg["dtype"] == "bf16" else torch.float32
+    
+    # Convert data_type string to torch dtype
+    if data_type == "bf16":
+        dtype = torch.bfloat16
+    elif data_type == "fp16" or data_type == "f16":
+        dtype = torch.float16
+    else:
+        dtype = torch.float32
+    
+    # Update config with the dtype we're using
+    cfg["dtype"] = data_type
+    
+    print(f"Using dtype: {dtype}, buffer size: {buffer_size}")
     
     # Load model and tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -306,7 +322,8 @@ def run_benchmark(
         "baseline_perplexity": baseline_ppl,
         "compressed_perplexity": compressed_ppl,
         "longbench_results": longbench_results,
-        "config": cfg
+        "config": cfg,
+        "buffer_size": buffer_size
     }
     
     # Save results and create visualizations
@@ -331,6 +348,8 @@ if __name__ == "__main__":
     parser.add_argument("--num_runs", type=int, default=5, help="Number of runs for timing")
     parser.add_argument("--output", type=str, required=True, help="Output directory")
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
+    parser.add_argument("--dtype", type=str, default="f32", help="Data type for training and inference")
+    parser.add_argument("--buffer_size", type=int, default=512, help="Buffer size for training")
     args = parser.parse_args()
     
     with open(args.config, "r") as f:
@@ -345,5 +364,6 @@ if __name__ == "__main__":
         args.num_runs,
         args.output,
         cfg,
-        args.data_type
+        args.dtype,
+        args.buffer_size
     ) 

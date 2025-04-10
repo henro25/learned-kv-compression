@@ -50,14 +50,56 @@ class Buffer():
             
         self.device = cfg["device"]
         
-        # Pre-allocate buffers for keys, values, and queries
-        # Shape: (batch_size * buffer_mult, num_layers, num_heads, seq_len, head_dim)
-        self.keys_buffer = torch.zeros(
-            (cfg["batch_size"] * cfg["buffer_mult"], cfg["num_hidden_layers"], self.num_heads, cfg["max_seq_len"], self.head_dim),
-            device=self.device
-        )
-        self.values_buffer = torch.zeros_like(self.keys_buffer)
-        self.queries_buffer = torch.zeros_like(self.keys_buffer)
+        # Get data type from config and convert to torch dtype
+        if "dtype" in cfg:
+            if isinstance(cfg["dtype"], str):
+                if cfg["dtype"] == "bf16":
+                    self.dtype = torch.bfloat16
+                elif cfg["dtype"] == "fp16" or cfg["dtype"] == "f16":
+                    self.dtype = torch.float16
+                else:
+                    self.dtype = torch.float32
+            else:
+                # If already a torch dtype (converted by train.py)
+                self.dtype = cfg["dtype"]
+        else:
+            self.dtype = torch.float32
+            
+        print(f"Buffer using data type: {self.dtype}")
+        
+        # Limit the maximum sequence length for training to reduce memory usage
+        buffer_size = cfg.get("buffer_size", 512)  # Default to 512 tokens if not specified
+        self.buffer_seq_len = min(cfg.get("max_seq_len", 8192), buffer_size)  # Use the smaller of max_seq_len or buffer_size
+        print(f"Using buffer sequence length of {self.buffer_seq_len} tokens (max_seq_len: {cfg.get('max_seq_len', 8192)}, buffer_size: {buffer_size})")
+        
+        # Reduce buffer multiplier if it's too large
+        buffer_mult = min(cfg.get("buffer_mult", 2), 2)  # Cap at 2x
+        
+        # Pre-allocate buffers for keys, values, and queries with reduced size
+        # Shape: (batch_size * buffer_mult, num_layers, num_heads, buffer_seq_len, head_dim)
+        buffer_size = (cfg["batch_size"] * buffer_mult, cfg["num_hidden_layers"], 
+                      self.num_heads, self.buffer_seq_len, self.head_dim)
+        
+        print(f"Allocating buffers with shape {buffer_size}, total elements: {torch.prod(torch.tensor(buffer_size))}")
+        
+        try:
+            self.keys_buffer = torch.zeros(buffer_size, device=self.device, dtype=self.dtype)
+            self.values_buffer = torch.zeros_like(self.keys_buffer)
+            self.queries_buffer = torch.zeros_like(self.keys_buffer)
+        except RuntimeError as e:
+            # If GPU memory allocation fails, try again with smaller buffers
+            print(f"Failed to allocate buffers on GPU: {e}")
+            print("Falling back to smaller buffer size...")
+            
+            # Try with even smaller buffer
+            self.buffer_seq_len = min(self.buffer_seq_len, 256)
+            buffer_size = (cfg["batch_size"] * buffer_mult, cfg["num_hidden_layers"], 
+                          self.num_heads, self.buffer_seq_len, self.head_dim)
+            
+            print(f"Retrying with buffer shape {buffer_size}")
+            self.keys_buffer = torch.zeros(buffer_size, device=self.device, dtype=self.dtype)
+            self.values_buffer = torch.zeros_like(self.keys_buffer)
+            self.queries_buffer = torch.zeros_like(self.keys_buffer)
         
         self.text_pointer = 0
         random.shuffle(self.texts)
@@ -79,7 +121,7 @@ class Buffer():
                 batch_texts, 
                 padding=True, 
                 truncation=True, 
-                max_length=self.cfg["max_seq_len"], 
+                max_length=self.buffer_seq_len,  # Use reduced sequence length
                 return_tensors="pt"
             )
             
@@ -123,11 +165,12 @@ class Buffer():
                 
                 # Store in buffers - only up to actual sequence length
                 buffer_slice_size = min(self.keys_buffer.shape[0] - self.pointer, batch_size)
+                actual_seq_len = min(seq_len, self.buffer_seq_len)
                 
                 # Store in buffers
-                self.keys_buffer[self.pointer:self.pointer + buffer_slice_size, l, :num_heads, :seq_len, :head_dim] = keys[:buffer_slice_size, :num_heads, :seq_len, :head_dim]
-                self.values_buffer[self.pointer:self.pointer + buffer_slice_size, l, :num_heads, :seq_len, :head_dim] = values[:buffer_slice_size, :num_heads, :seq_len, :head_dim]
-                self.queries_buffer[self.pointer:self.pointer + buffer_slice_size, l, :num_heads, :seq_len, :head_dim] = queries[:buffer_slice_size, :num_heads, :seq_len, :head_dim]
+                self.keys_buffer[self.pointer:self.pointer + buffer_slice_size, l, :num_heads, :actual_seq_len, :head_dim] = keys[:buffer_slice_size, :num_heads, :actual_seq_len, :head_dim]
+                self.values_buffer[self.pointer:self.pointer + buffer_slice_size, l, :num_heads, :actual_seq_len, :head_dim] = values[:buffer_slice_size, :num_heads, :actual_seq_len, :head_dim]
+                self.queries_buffer[self.pointer:self.pointer + buffer_slice_size, l, :num_heads, :actual_seq_len, :head_dim] = queries[:buffer_slice_size, :num_heads, :actual_seq_len, :head_dim]
 
             self.pointer += buffer_slice_size
             self.text_pointer += self.cfg["lm_batch_size"]
@@ -135,6 +178,9 @@ class Buffer():
             if self.text_pointer > len(self.texts) - self.cfg["lm_batch_size"]:
                 self.text_pointer = 0
                 random.shuffle(self.texts)
+
+            # Release some memory after each batch
+            torch.cuda.empty_cache()
 
         # Shuffle the buffers
         self.pointer = 0

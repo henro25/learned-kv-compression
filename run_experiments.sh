@@ -7,9 +7,9 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 
-# Usage: sbatch run_experiments.sh [model_name] [latent_dims] [cache_sizes] [num_epochs] [num_train_texts] [batch_size] [num_runs]
-# Example: sbatch run_experiments.sh "Qwen/Qwen2.5-7B"  "1 2 3" "10 100 150" "1 2 3" "100 1000 1500" "64 65 66" "1 2 3"
-# run_experiments.sh "Qwen/Qwen2.5-7B" "8 16" "1000" "5" "10000" "64" "2" "bf16" "./src/configs/qwen25_7b_config.json"
+# Usage: sbatch run_experiments.sh [model_name] [latent_dims] [cache_sizes] [num_epochs] [num_train_texts] [batch_size] [num_runs] [dtype] [config_file] [buffer_size]
+# Example: sbatch run_experiments.sh "Qwen/Qwen2.5-7B"  "1 2 3" "10 100 150" "1 2 3" "100 1000 1500" "64 65 66" "1 2 3" "bf16" "./src/configs/qwen25_7b_config.json" 512
+# run_experiments.sh "Qwen/Qwen2.5-7B" "8 16" "1000" "5" "10000" "64" "2" "bf16" "./src/configs/qwen25_7b_config.json" 512
 MODEL=${1:-distilgpt2}
 LATENT_DIMS=${2:-"8 16 32"}
 CACHE_SIZES=${3:-"1 10 100 1000"}
@@ -19,6 +19,7 @@ BATCH_SIZE=${6:-64}
 NUM_RUNS=${7:-5}
 DATA_TYPE=${8:-"f32"}
 CONFIG_FILE=${9:-"default_config.json"}
+BUFFER_SIZE=${10:-512}
 OUTPUT_DIR="experiment_results_${MODEL}"
 
 # Print configuration
@@ -30,6 +31,8 @@ echo "Number of epochs: $NUM_EPOCHS"
 echo "Number of training texts: $NUM_TRAIN_TEXTS"
 echo "Batch size: $BATCH_SIZE"
 echo "Number of runs for timing: $NUM_RUNS"
+echo "Data type: $DATA_TYPE"
+echo "Buffer size (sequence length): $BUFFER_SIZE"
 echo "Output directory: $OUTPUT_DIR"
 echo "========================================"
 
@@ -49,6 +52,7 @@ python run_experiments.py \
     --num_runs $NUM_RUNS \
     --dtype $DATA_TYPE \
     --config $CONFIG_FILE \
+    --buffer_size $BUFFER_SIZE \
     --output_dir $OUTPUT_DIR 
 echo "Experiment completed at $(date)"
 
