@@ -10,7 +10,7 @@
   "buffer_mult": 2,
   "num_hidden_layers": 28,
   "lm_batch_size": 1,
-  "num_key_value_heads": 32,
+  "num_attention_heads": 32,
   "eval_interval": 100,
   "config": "src/configs/qwen25_7b_config.json",
   "output_dir": "models",

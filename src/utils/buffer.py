@@ -18,7 +18,7 @@ warnings.filterwarnings("ignore", message=".*scaled_dot_product_attention.*")
 class Buffer():
     """
     Buffer for storing KV vectors and queries for training the autoencoder.
-    This version is adapted for quick CPU testing using "distilgpt2".
+    This optimized version uses less memory by reducing buffer sizes and adding explicit memory management.
     """
     def __init__(self, cfg, model, tokenizer, texts):
         self.cfg = cfg
@@ -29,19 +29,21 @@ class Buffer():
             self.tokenizer.pad_token = self.tokenizer.eos_token or self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         
         # Get actual model configuration
-        if cfg.get("name") == "Qwen/Qwen2.5-7B":
-            # Special handling for Qwen models
+        if cfg.get("name").split("/")[0] == "Qwen":
             self.num_heads = model.config.num_attention_heads
             self.hidden_size = model.config.hidden_size
+            # Update config with actual model values
+            if self.cfg["num_attention_heads"] != self.num_heads:
+                raise ValueError("num_attention_heads does not match the number of heads in the model, the model has {} heads and the config has {} heads".format(self.num_heads, self.cfg["num_attention_heads"]))
+            if self.cfg["hidden_size"] != self.hidden_size:
+                raise ValueError("hidden_size does not match the hidden size in the model, the model has a hidden size of {} and the config has a hidden size of {}".format(self.hidden_size, self.cfg["hidden_size"]))
         else:
             # Default handling for other models
             self.num_heads = model.config.n_head
             self.hidden_size = model.config.hidden_size
         self.head_dim = self.hidden_size // self.num_heads
         
-        # Update config with actual model values
-        self.cfg["num_key_value_heads"] = self.num_heads
-        self.cfg["head_dim"] = self.head_dim
+        
         
         # Filter out empty texts and ensure minimum length
         self.texts = [text for text in texts if text.strip() and len(text.split()) >= 3]
@@ -67,39 +69,68 @@ class Buffer():
             
         print(f"Buffer using data type: {self.dtype}")
         
-        # Limit the maximum sequence length for training to reduce memory usage
-        buffer_size = cfg.get("buffer_size", 512)  # Default to 512 tokens if not specified
-        self.buffer_seq_len = min(cfg.get("max_seq_len", 8192), buffer_size)  # Use the smaller of max_seq_len or buffer_size
-        print(f"Using buffer sequence length of {self.buffer_seq_len} tokens (max_seq_len: {cfg.get('max_seq_len', 8192)}, buffer_size: {buffer_size})")
+        # Reduce buffer sequence length significantly to save memory
+        buffer_size = cfg.get("buffer_size", 128)  # Default to 128 tokens instead of 512
+        self.buffer_seq_len = min(cfg.get("max_seq_len", 256), buffer_size)  # Use smaller of max_seq_len or buffer_size
+        print(f"Using buffer sequence length of {self.buffer_seq_len} tokens (max_seq_len: {cfg.get('max_seq_len', 256)}, buffer_size: {buffer_size})")
         
-        # Reduce buffer multiplier if it's too large
-        buffer_mult = min(cfg.get("buffer_mult", 2), 2)  # Cap at 2x
+        # Reduce buffer multiplier even more
+        buffer_mult = min(cfg.get("buffer_mult", 1), 1)  # Cap at 1x instead of 2x
         
-        # Pre-allocate buffers for keys, values, and queries with reduced size
+        # Get batch size with a smaller default
+        try:
+            batch_size = cfg.get("batch_size")
+            if batch_size is None:
+                raise ValueError("batch_size not specified in configuration")
+        except Exception as e:
+            print(f"Error: {e}")
+            batch_size = 8  # Default to 8 instead of 64
+            print(f"Using default batch_size: {batch_size}")
+        
+        # Pre-allocate buffers with reduced size to save memory
         # Shape: (batch_size * buffer_mult, num_layers, num_heads, buffer_seq_len, head_dim)
-        buffer_size = (cfg["batch_size"] * buffer_mult, cfg["num_hidden_layers"], 
+        buffer_size = (batch_size * buffer_mult, cfg["num_hidden_layers"], 
                       self.num_heads, self.buffer_seq_len, self.head_dim)
         
         print(f"Allocating buffers with shape {buffer_size}, total elements: {torch.prod(torch.tensor(buffer_size))}")
         
         try:
+            # Try allocating tensors with specified size
             self.keys_buffer = torch.zeros(buffer_size, device=self.device, dtype=self.dtype)
             self.values_buffer = torch.zeros_like(self.keys_buffer)
             self.queries_buffer = torch.zeros_like(self.keys_buffer)
         except RuntimeError as e:
-            # If GPU memory allocation fails, try again with smaller buffers
+            # If allocation fails, try with progressively smaller buffers
             print(f"Failed to allocate buffers on GPU: {e}")
-            print("Falling back to smaller buffer size...")
+            print("Trying with smaller buffers...")
             
-            # Try with even smaller buffer
-            self.buffer_seq_len = min(self.buffer_seq_len, 256)
-            buffer_size = (cfg["batch_size"] * buffer_mult, cfg["num_hidden_layers"], 
-                          self.num_heads, self.buffer_seq_len, self.head_dim)
-            
-            print(f"Retrying with buffer shape {buffer_size}")
-            self.keys_buffer = torch.zeros(buffer_size, device=self.device, dtype=self.dtype)
-            self.values_buffer = torch.zeros_like(self.keys_buffer)
-            self.queries_buffer = torch.zeros_like(self.keys_buffer)
+            # First reduction - try with smaller batch size
+            try:
+                buffer_size = (max(1, batch_size // 2) * buffer_mult, cfg["num_hidden_layers"],
+                              self.num_heads, self.buffer_seq_len, self.head_dim)
+                print(f"Retrying with buffer shape {buffer_size}")
+                self.keys_buffer = torch.zeros(buffer_size, device=self.device, dtype=self.dtype)
+                self.values_buffer = torch.zeros_like(self.keys_buffer)
+                self.queries_buffer = torch.zeros_like(self.keys_buffer)
+            except RuntimeError:
+                # Second reduction - reduce sequence length too
+                try:
+                    self.buffer_seq_len = min(self.buffer_seq_len, 64)  # Reduce to 64 tokens
+                    buffer_size = (max(1, batch_size // 2) * buffer_mult, cfg["num_hidden_layers"],
+                                  self.num_heads, self.buffer_seq_len, self.head_dim)
+                    print(f"Retrying with buffer shape {buffer_size}")
+                    self.keys_buffer = torch.zeros(buffer_size, device=self.device, dtype=self.dtype)
+                    self.values_buffer = torch.zeros_like(self.keys_buffer)
+                    self.queries_buffer = torch.zeros_like(self.keys_buffer)
+                except RuntimeError:
+                    # Last resort - allocate minimum viable buffers
+                    print("Using minimum viable buffer size")
+                    self.buffer_seq_len = 32
+                    buffer_size = (2, cfg["num_hidden_layers"],
+                                 self.num_heads, self.buffer_seq_len, self.head_dim)
+                    self.keys_buffer = torch.zeros(buffer_size, device=self.device, dtype=self.dtype)
+                    self.values_buffer = torch.zeros_like(self.keys_buffer)
+                    self.queries_buffer = torch.zeros_like(self.keys_buffer)
         
         self.text_pointer = 0
         random.shuffle(self.texts)
@@ -110,8 +141,11 @@ class Buffer():
         self.pointer = 0
         
         while self.pointer < self.keys_buffer.shape[0]:
+            # Get lm_batch_size with default
+            lm_batch_size = self.cfg.get("lm_batch_size", 1)  # Default to 1 if not specified
+            
             # Grab a mini-batch of texts.
-            batch_texts = self.texts[self.text_pointer:self.text_pointer + self.cfg["lm_batch_size"]]
+            batch_texts = self.texts[self.text_pointer:self.text_pointer + lm_batch_size]
             if not batch_texts:
                 self.text_pointer = 0
                 random.shuffle(self.texts)
@@ -173,9 +207,9 @@ class Buffer():
                 self.queries_buffer[self.pointer:self.pointer + buffer_slice_size, l, :num_heads, :actual_seq_len, :head_dim] = queries[:buffer_slice_size, :num_heads, :actual_seq_len, :head_dim]
 
             self.pointer += buffer_slice_size
-            self.text_pointer += self.cfg["lm_batch_size"]
+            self.text_pointer += lm_batch_size
             
-            if self.text_pointer > len(self.texts) - self.cfg["lm_batch_size"]:
+            if self.text_pointer > len(self.texts) - lm_batch_size:
                 self.text_pointer = 0
                 random.shuffle(self.texts)
 
@@ -199,13 +233,16 @@ class Buffer():
                 - queries is a tensor
                 All tensors have shape (batch_size, num_layers, num_heads, seq_len, head_dim)
         """
-        # Get the next batch
-        keys = self.keys_buffer[self.pointer:self.pointer + self.cfg["batch_size"]]
-        values = self.values_buffer[self.pointer:self.pointer + self.cfg["batch_size"]]
-        queries = self.queries_buffer[self.pointer:self.pointer + self.cfg["batch_size"]]
+        # Get batch size with default
+        batch_size = self.cfg.get("batch_size", 2)  # Default to 2 if not specified
         
-        self.pointer += self.cfg["batch_size"]
-        if self.pointer > self.keys_buffer.shape[0] - self.cfg["batch_size"]:
+        # Get the next batch
+        keys = self.keys_buffer[self.pointer:self.pointer + batch_size]
+        values = self.values_buffer[self.pointer:self.pointer + batch_size]
+        queries = self.queries_buffer[self.pointer:self.pointer + batch_size]
+        
+        self.pointer += batch_size
+        if self.pointer > self.keys_buffer.shape[0] - batch_size:
             self.refresh()
             
         return (keys, values), queries
@@ -218,7 +255,7 @@ if __name__ == "__main__":
         "buffer_mult": 2,
         "lm_batch_size": 1,
         "num_hidden_layers": 6,       # distilgpt2 has 6 layers
-        "num_key_value_heads": 12,    # as in the model config
+        "num_attention_heads": 12,    # as in the model config
         "head_dim": 64,               # 768/12 = 64
         "max_seq_len": 128,           # maximum sequence length
         "device": torch.device("cpu")

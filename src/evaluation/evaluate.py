@@ -218,6 +218,7 @@ def plot_perplexity_comparison(results, save_path=None):
         plt.show()
 
 def main(cfg):
+    head_dim = cfg["hidden_size"] // cfg["num_attention_heads"]
     # Set device
     device = torch.device(cfg["device"])
     
@@ -245,7 +246,7 @@ def main(cfg):
     
     try:
         # Load trained autoencoder
-        autoencoder = Autoencoder(input_dim=cfg["head_dim"], latent_dim=cfg["latent_dim"]).to(device)
+        autoencoder = Autoencoder(input_dim=head_dim, latent_dim=cfg["latent_dim"]).to(device)
         autoencoder.load_state_dict(torch.load(autoencoder_path))
         print(f"Successfully loaded autoencoder from {autoencoder_path}")
     except Exception as e:
