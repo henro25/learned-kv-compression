@@ -29,8 +29,14 @@ class Buffer():
             self.tokenizer.pad_token = self.tokenizer.eos_token or self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         
         # Get actual model configuration
-        self.num_heads = model.config.n_head
-        self.hidden_size = model.config.hidden_size
+        if cfg.get("name") == "Qwen/Qwen2.5-7B":
+            # Special handling for Qwen models
+            self.num_heads = model.config.num_attention_heads
+            self.hidden_size = model.config.hidden_size
+        else:
+            # Default handling for other models
+            self.num_heads = model.config.n_head
+            self.hidden_size = model.config.hidden_size
         self.head_dim = self.hidden_size // self.num_heads
         
         # Update config with actual model values

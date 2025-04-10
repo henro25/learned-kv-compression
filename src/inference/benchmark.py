@@ -258,20 +258,23 @@ def run_benchmark(
     batch_size: int,
     num_runs: int,
     output_dir: str,
-    cfg: Dict
+    cfg: Dict,
+    data_type: str
 ) -> str:
     """Run benchmarks with the trained autoencoder."""
-    result_dir = os.path.join(output_dir, f"benchmark_{model_name}_latent{latent_dim}")
+    safe_model_name = model_name.replace("/", "_")
+    result_dir = os.path.join(output_dir, f"benchmark_{safe_model_name}_latent{latent_dim}")
     os.makedirs(result_dir, exist_ok=True)
     
     # Set device
     device = torch.device(cfg["device"])
+    dtype = torch.bfloat16 if cfg["dtype"] == "bf16" else torch.float32
     
     # Load model and tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.float32,
+        torch_dtype=dtype,
         device_map={"": device},
         output_hidden_states=True,
         output_attentions=True,
@@ -341,5 +344,6 @@ if __name__ == "__main__":
         args.batch_size,
         args.num_runs,
         args.output,
-        cfg
+        cfg,
+        args.data_type
     ) 

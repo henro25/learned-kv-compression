@@ -50,6 +50,7 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="models", help="Directory to save models")
     parser.add_argument("--num_train_texts", type=int, default=1000, help="Number of training texts to use")
     parser.add_argument("--num_eval_texts", type=int, default=100, help="Number of evaluation texts to use")
+    parser.add_argument("--dtype", type=str, default="f32", help="Data type for training and inference")
     return vars(parser.parse_args())
 
 def visualize_attention_differences(original_attn, recon_attn, layer_idx, head_idx, save_path=None):
@@ -150,15 +151,40 @@ def main(cfg):
     random.seed(SEED)
     cfg["device"] = str(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     
-    # Create output directory
+    # Convert dtype string to torch dtype
+    if "dtype" not in cfg:
+        print("Warning: dtype not found in config, defaulting to float32")
+        cfg["dtype"] = torch.float32
+    else:
+        if cfg["dtype"] == "bf16":
+            cfg["dtype"] = torch.bfloat16
+        elif cfg["dtype"] == "fp16" or cfg["dtype"] == "f16":
+            cfg["dtype"] = torch.float16
+        else:
+            cfg["dtype"] = torch.float32
+            
+    print(f"Using dtype: {cfg['dtype']}")
+    
+    # Create output direct
     os.makedirs(cfg["output_dir"], exist_ok=True)
     os.makedirs(os.path.join(cfg["output_dir"], "attention_viz"), exist_ok=True)
     
     # Load the pretrained model and tokenizer.
     tokenizer = AutoTokenizer.from_pretrained(cfg["name"])
+    if cfg["name"].split("/")[0] == "Qwen":
+        model = AutoModelForCausalLM.from_pretrained(
+            cfg["name"],
+            trust_remote_code=True,
+            torch_dtype=cfg["dtype"],
+            device_map={"": cfg["device"]},
+            output_hidden_states=True,  # Enable hidden states output
+            output_attentions=True,     # Enable attention output
+            use_cache=True              # Enable KV cache
+        )
+
     model = AutoModelForCausalLM.from_pretrained(
         cfg["name"],
-        torch_dtype=torch.float32,
+        torch_dtype=cfg["dtype"],
         device_map={"": cfg["device"]},
         output_hidden_states=True,  # Enable hidden states output
         output_attentions=True,     # Enable attention output

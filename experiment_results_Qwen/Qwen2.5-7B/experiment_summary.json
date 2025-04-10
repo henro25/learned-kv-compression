@@ -1,0 +1,48 @@
+{
+  "total_runtime_seconds": 74.84666633605957,
+  "models": [
+    "Qwen/Qwen2.5-7B"
+  ],
+  "latent_dims": [
+    8,
+    16
+  ],
+  "num_epochs": [
+    5
+  ],
+  "num_train_texts": [
+    10000
+  ],
+  "batch_sizes": [
+    64
+  ],
+  "num_runs": [
+    2
+  ],
+  "cache_sizes": [
+    1000.0
+  ],
+  "results": [
+    {
+      "model": "Qwen/Qwen2.5-7B",
+      "latent_dim": 8,
+      "num_epochs": 5,
+      "num_train_texts": 10000,
+      "batch_size": 64,
+      "num_runs": 2,
+      "result_dir": "experiment_results_Qwen/Qwen2.5-7B/benchmark_Qwen_Qwen2.5-7B_latent8_batch64_runs2",
+      "data_type": "bf16"
+    },
+    {
+      "model": "Qwen/Qwen2.5-7B",
+      "latent_dim": 16,
+      "num_epochs": 5,
+      "num_train_texts": 10000,
+      "batch_size": 64,
+      "num_runs": 2,
+      "result_dir": "experiment_results_Qwen/Qwen2.5-7B/benchmark_Qwen_Qwen2.5-7B_latent16_batch64_runs2",
+      "data_type": "bf16"
+    }
+  ],
+  "data_type": "bf16"
+}

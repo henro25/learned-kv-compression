@@ -36,6 +36,8 @@ def parse_args():
                         help="Batch size for compression operations")
     parser.add_argument("--num_runs", type=int, nargs="+", default=[5],
                         help="Number of runs for timing statistics")
+    parser.add_argument("--dtype", type=str, nargs="+", default=["f32"],
+                        help="Data type for training and inference")
     parser.add_argument("--skip_training", action="store_true",
                         help="Skip training and use existing models")
     parser.add_argument("--output_dir", type=str, default="experiment_results",
@@ -50,13 +52,14 @@ def load_config(config_path: str) -> Dict[str, Any]:
         return json.load(f)
 
 def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int, 
-                     num_train_texts: int, output_dir: str, cfg: Dict[str, Any]) -> str:
+                     num_train_texts: int, output_dir: str, cfg: Dict[str, Any], data_type: str) -> str:
     """Train an autoencoder with the specified parameters."""
-    model_dir = os.path.join(output_dir, f"{model_name}_latent{latent_dim}")
+    safe_model_name = model_name.replace("/", "_")
+    model_dir = os.path.join(output_dir, f"{safe_model_name}_latent{latent_dim}")
     os.makedirs(model_dir, exist_ok=True)
     
     print("MODEL DIR: ", model_dir)
-    
+    print("CFG: ", cfg)
     # Update config with training parameters
     train_cfg = cfg.copy()
     train_cfg.update({
@@ -64,7 +67,8 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
         "latent_dim": latent_dim,
         "num_epochs": num_epochs,
         "num_train_texts": num_train_texts,
-        "output_dir": model_dir
+        "output_dir": model_dir,
+        "dtype": data_type  # Use the data_type parameter instead of cfg["dtype"]
     })
     
     # Save updated config
@@ -79,11 +83,12 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
         "--latent_dim", str(latent_dim),
         "--num_epochs", str(num_epochs),
         "--num_train_texts", str(num_train_texts),
-        "--output_dir", model_dir
+        "--output_dir", model_dir,
+        "--dtype", data_type  # Use the data_type parameter instead of cfg["dtype"]
     ]
     
     print(f"\n{'='*80}")
-    print(f"Training autoencoder with model={model_name}, latent_dim={latent_dim}, epochs={num_epochs}, train_texts={num_train_texts}")
+    print(f"Training autoencoder with model={model_name}, latent_dim={latent_dim}, epochs={num_epochs}, train_texts={num_train_texts}, dtype={data_type}")
     print(f"{'='*80}")
     print(" ".join(cmd))
     
@@ -93,9 +98,10 @@ def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int,
 
 def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int, 
                  cache_sizes: List[float], batch_size: int, num_runs: int, 
-                 output_dir: str, cfg: Dict[str, Any]) -> str:
+                 output_dir: str, cfg: Dict[str, Any], data_type: str) -> str:
     """Run benchmarks with the trained autoencoder."""
-    result_dir = os.path.join(output_dir, f"benchmark_{model_name}_latent{latent_dim}_batch{batch_size}_runs{num_runs}")
+    safe_model_name = model_name.replace("/", "_")
+    result_dir = os.path.join(output_dir, f"benchmark_{safe_model_name}_latent{latent_dim}_batch{batch_size}_runs{num_runs}")
     os.makedirs(result_dir, exist_ok=True)
     
     # Update config with benchmark parameters
@@ -105,7 +111,8 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
         "latent_dim": latent_dim,
         "batch_size": batch_size,
         "num_runs": num_runs,
-        "cache_sizes": cache_sizes
+        "cache_sizes": cache_sizes,
+        "data_type": data_type
     })
     
     # Save updated config
@@ -123,11 +130,12 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
         "--batch_size", str(batch_size),
         "--num_runs", str(num_runs),
         "--output", result_dir,
-        "--config", config_path
+        "--config", config_path,
+        "--dtype", data_type
     ]
     
     print(f"\n{'='*80}")
-    print(f"Running benchmark with model={model_name}, latent_dim={latent_dim}, batch_size={batch_size}, num_runs={num_runs}")
+    print(f"Running benchmark with model={model_name}, latent_dim={latent_dim}, batch_size={batch_size}, num_runs={num_runs}, data_type={data_type}")
     print(f"{'='*80}")
     print(" ".join(cmd))
     
@@ -160,6 +168,7 @@ def main():
     num_train_texts_list = parse_space_separated_values(args.num_train_texts, int)
     batch_sizes = parse_space_separated_values(args.batch_size, int)
     num_runs_list = parse_space_separated_values(args.num_runs, int)
+    data_types = parse_space_separated_values(args.dtype, str)
     
     # Print parsed arguments for debugging
     print("Parsed arguments:")
@@ -170,7 +179,7 @@ def main():
     print(f"Training texts: {num_train_texts_list}")
     print(f"Batch sizes: {batch_sizes}")
     print(f"Number of runs: {num_runs_list}")
-    
+    print(f"Data types: {data_types}")
     # Load base configuration
     cfg = load_config(args.config)
     
@@ -186,7 +195,8 @@ def main():
             for num_epochs in num_epochs_list:
                 for num_train_texts in num_train_texts_list:
                     # For each trained model, create a unique identifier
-                    model_id = f"{model_name}_latent{latent_dim}_epochs{num_epochs}_texts{num_train_texts}"
+                    safe_model_name = model_name.replace("/", "_")
+                    model_id = f"{safe_model_name}_latent{latent_dim}_epochs{num_epochs}_texts{num_train_texts}"
                     model_output_dir = os.path.join(args.output_dir, model_id)
                     os.makedirs(model_output_dir, exist_ok=True)
                     
@@ -198,11 +208,13 @@ def main():
                             num_epochs=num_epochs,
                             num_train_texts=num_train_texts,
                             output_dir=args.output_dir,
-                            cfg=cfg
+                            cfg=cfg,
+                            data_type=data_types[0]
                         )
                     else:
                         # Use existing model if skipping training
-                        model_dir = os.path.join(args.output_dir, f"{model_name}_latent{latent_dim}")
+                        safe_model_name = model_name.replace("/", "_")
+                        model_dir = os.path.join(args.output_dir, f"{safe_model_name}_latent{latent_dim}")
                         model_path = os.path.join(model_dir, "autoencoder_final.pth")
                         if not os.path.exists(model_path):
                             print(f"Warning: Model {model_path} not found. Skipping this configuration.")
@@ -219,7 +231,8 @@ def main():
                                 batch_size=batch_size,
                                 num_runs=num_runs,
                                 output_dir=args.output_dir,
-                                cfg=cfg
+                                cfg=cfg,
+                                data_type=data_types[0]
                             )
                             
                             all_results.append({
@@ -229,7 +242,8 @@ def main():
                                 "num_train_texts": num_train_texts,
                                 "batch_size": batch_size,
                                 "num_runs": num_runs,
-                                "result_dir": result_dir
+                                "result_dir": result_dir,
+                                "data_type": data_types[0]
                             })
     
     # Calculate total runtime
@@ -249,7 +263,8 @@ def main():
             "batch_sizes": batch_sizes,
             "num_runs": num_runs_list,
             "cache_sizes": cache_sizes,
-            "results": all_results
+            "results": all_results,
+            "data_type": data_types[0]
         }, f, indent=2)
     
     # Print summary of experiments
@@ -257,6 +272,7 @@ def main():
     print(f"Experiment Summary")
     print(f"{'='*80}")
     print(f"Models tested: {models}")
+    print(f"Data type: {data_types[0]}")
     print(f"Latent dimensions tested: {latent_dims}")
     print(f"Epochs tested: {num_epochs_list}")
     print(f"Training texts tested: {num_train_texts_list}")
@@ -266,7 +282,6 @@ def main():
     print(f"Total runtime: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
     print(f"Results saved to: {args.output_dir}")
     print(f"Total experiments: {len(all_results)}")
-    
     print(f"{'='*80}")
     print("Experiment Results:")
     for result in all_results:
