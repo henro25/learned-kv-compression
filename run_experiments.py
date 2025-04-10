@@ -79,6 +79,7 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
     os.makedirs(result_dir, exist_ok=True)
     
     # Update config with benchmark parameters
+    # NOTE: THIS IS A HACK TO GET IT TO WORK
     benchmark_cfg = cfg.copy()
     benchmark_cfg.update({
         "model_name": model_name,
@@ -91,8 +92,7 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
         "output_dir": result_dir,  # Set result_dir as output_dir
         "learning_rate": learning_rate
     })
-    
-    
+
     # Save updated config
     config_path = os.path.join(result_dir, "benchmark_config.json")
     with open(config_path, "w") as f:

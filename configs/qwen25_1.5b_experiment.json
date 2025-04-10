@@ -21,7 +21,7 @@
     "device": "cuda",
   
     "name": "Qwen/Qwen2.5-1.5B",
-    "num_hidden_layers": 36,
+    "num_hidden_layers": 28,
     "num_attention_heads": 12,
     "max_seq_len": 8192,
     "hidden_size": 1536,

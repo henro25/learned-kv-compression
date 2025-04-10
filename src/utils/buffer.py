@@ -32,15 +32,33 @@ class Buffer():
         if cfg.get("name").split("/")[0] == "Qwen":
             self.num_heads = model.config.num_attention_heads
             self.hidden_size = model.config.hidden_size
-            # Update config with actual model values
+            # Get the actual number of hidden layers from the model
+            actual_layers = model.config.num_hidden_layers
+            
+            # Update config with actual model values if they don't match
             if self.cfg["num_attention_heads"] != self.num_heads:
-                raise ValueError("num_attention_heads does not match the number of heads in the model, the model has {} heads and the config has {} heads".format(self.num_heads, self.cfg["num_attention_heads"]))
+                print(f"Warning: num_attention_heads in config ({self.cfg['num_attention_heads']}) does not match the model ({self.num_heads})")
+                self.cfg["num_attention_heads"] = self.num_heads
+                
             if self.cfg["hidden_size"] != self.hidden_size:
-                raise ValueError("hidden_size does not match the hidden size in the model, the model has a hidden size of {} and the config has a hidden size of {}".format(self.hidden_size, self.cfg["hidden_size"]))
+                print(f"Warning: hidden_size in config ({self.cfg['hidden_size']}) does not match the model ({self.hidden_size})")
+                self.cfg["hidden_size"] = self.hidden_size
+                
+            if self.cfg["num_hidden_layers"] != actual_layers:
+                print(f"Warning: num_hidden_layers in config ({self.cfg['num_hidden_layers']}) does not match the model ({actual_layers})")
+                self.cfg["num_hidden_layers"] = actual_layers
         else:
             # Default handling for other models
             self.num_heads = model.config.n_head
             self.hidden_size = model.config.hidden_size
+            
+            # Get actual number of layers
+            if hasattr(model.config, 'num_hidden_layers'):
+                actual_layers = model.config.num_hidden_layers
+                if self.cfg.get("num_hidden_layers") != actual_layers:
+                    print(f"Warning: num_hidden_layers in config ({self.cfg.get('num_hidden_layers')}) does not match the model ({actual_layers})")
+                    self.cfg["num_hidden_layers"] = actual_layers
+        
         self.head_dim = self.hidden_size // self.num_heads
         
         
