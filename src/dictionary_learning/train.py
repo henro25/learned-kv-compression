@@ -52,13 +52,8 @@ def visualize_attention_differences(original_attn, recon_attn, layer_idx, head_i
         save_path: Path to save the visualization (optional)
     """
     # Take the first sample in the batch
-<<<<<<< HEAD
-    original = original_attn[0].detach().cpu().numpy()
-    recon = recon_attn[0].detach().cpu().numpy()
-=======
     original = original_attn[0].detach().cpu().float().numpy()  # Convert BFloat16 to float32 first
     recon = recon_attn[0].detach().cpu().float().numpy()
->>>>>>> main
     diff = np.abs(original - recon)
     
     # Create figure with subplots
@@ -163,16 +158,6 @@ def main(cfg):
     
     # Load the pretrained model and tokenizer.
     tokenizer = AutoTokenizer.from_pretrained(cfg["name"])
-<<<<<<< HEAD
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg["name"],
-        torch_dtype=torch.float32,
-        device_map={"": cfg["device"]},
-        output_hidden_states=True,  # Enable hidden states output
-        output_attentions=True,     # Enable attention output
-        use_cache=True              # Enable KV cache
-    )
-=======
     if cfg["name"].split("/")[0] == "Qwen":
         model = AutoModelForCausalLM.from_pretrained(
             cfg["name"],
@@ -192,23 +177,17 @@ def main(cfg):
             output_attentions=True,     # Enable attention output
             use_cache=True              # Enable KV cache
         )
->>>>>>> main
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token or tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         model.resize_token_embeddings(len(tokenizer))
     model.eval()
 
-<<<<<<< HEAD
-    # Initialize the autoencoder.
-    autoencoder = Autoencoder(input_dim=cfg["head_dim"], latent_dim=cfg["latent_dim"]).to(cfg["device"])
-=======
     # Initialize the autoencoder with the proper dtype
     autoencoder = Autoencoder(
         input_dim=head_dim, 
         latent_dim=cfg["latent_dim"],
         dtype=cfg["dtype"]
     ).to(cfg["device"])
->>>>>>> main
 
     writer = SummaryWriter(log_dir=f'runs/{cfg["name"]}_{cfg["latent_dim"]}')
 
@@ -267,37 +246,10 @@ def main(cfg):
             # Get a batch of KV pairs and queries from the training buffer.
             kvs, queries = train_buffer.next()
             keys, values = kvs
-<<<<<<< HEAD
-            
-            # Flatten for processing through autoencoder
-            keys_flat = keys.reshape(-1, cfg["head_dim"])
-            values_flat = values.reshape(-1, cfg["head_dim"])
-            
-            # Forward pass through autoencoder
-            k_recon_flat, k_latent = autoencoder(keys_flat)
-            v_recon_flat, v_latent = autoencoder(values_flat)
-            
-            # Reshape back to original dimensions
-            k_recon = k_recon_flat.reshape(keys.shape)
-            v_recon = v_recon_flat.reshape(values.shape)
-            
-            # Compute original and reconstructed attention
-            original_attn, original_weights = compute_attention(queries, keys, values)
-            recon_attn, recon_weights = compute_attention(queries, k_recon, v_recon)
-            
-            # Compute attention-preserving loss
-            loss = F.mse_loss(recon_attn, original_attn)
-            
-            # Compute compression ratio
-            original_size = sum(kv.numel() * kv.element_size() for kv in [keys, values])
-            compressed_size = sum(latent.numel() * latent.element_size() for latent in [k_latent, v_latent])
-            compression_ratio = original_size / compressed_size
-=======
             
             # Flatten for processing through autoencoder
             keys_flat = keys.reshape(-1, head_dim)
             values_flat = values.reshape(-1, head_dim)
->>>>>>> main
             
             # Forward pass through autoencoder
             k_recon_flat, k_latent = autoencoder(keys_flat)
@@ -320,9 +272,6 @@ def main(cfg):
             # Backward pass (accumulate gradients)
             loss.backward()
             
-<<<<<<< HEAD
-            epoch_loss += loss.item() * keys.size(0)
-=======
             # Only update weights after accumulating gradients for specified steps
             if (i + 1) % cfg["gradient_accumulation_steps"] == 0 or (i + 1) == batches_per_epoch:
                 optimizer.step()
@@ -332,7 +281,6 @@ def main(cfg):
                 torch.cuda.empty_cache()
             
             epoch_loss += loss.item() * keys.size(0) * cfg["gradient_accumulation_steps"]
->>>>>>> main
             writer.add_scalar('Loss/train', loss.item(), epoch * batches_per_epoch + i)
             
             # Log attention matrix difference every 100 batches
@@ -384,13 +332,8 @@ def main(cfg):
                     keys, values = kvs
                     
                     # Forward pass through autoencoder
-<<<<<<< HEAD
-                    keys_flat = keys.reshape(-1, cfg["head_dim"])
-                    values_flat = values.reshape(-1, cfg["head_dim"])
-=======
                     keys_flat = keys.reshape(-1, head_dim)
                     values_flat = values.reshape(-1, head_dim)
->>>>>>> main
                     k_recon_flat, _ = autoencoder(keys_flat)
                     v_recon_flat, _ = autoencoder(values_flat)
                     

@@ -254,34 +254,6 @@ def run_benchmark(
     model_name: str,
     autoencoder_path: str,
     latent_dim: int,
-<<<<<<< HEAD
-    cache_sizes: List[float],
-    batch_size: int,
-    num_runs: int,
-    output_dir: str,
-    cfg: Dict
-) -> str:
-    """Run benchmarks with the trained autoencoder."""
-    result_dir = os.path.join(output_dir, f"benchmark_{model_name}_latent{latent_dim}")
-    os.makedirs(result_dir, exist_ok=True)
-    
-    # Set device
-    device = torch.device(cfg["device"])
-    
-    # Load model and tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.float32,
-        device_map={"": device},
-        output_hidden_states=True,
-        output_attentions=True,
-        use_cache=True
-    )
-    
-    # Load trained autoencoder
-    autoencoder = Autoencoder(input_dim=cfg["head_dim"], latent_dim=latent_dim).to(device)
-=======
     output_dir: str,
     cfg: Dict
 ) -> str:
@@ -331,7 +303,6 @@ def run_benchmark(
     
     # Load trained autoencoder
     autoencoder = Autoencoder(input_dim=head_dim, latent_dim=latent_dim).to(device)
->>>>>>> main
     autoencoder.load_state_dict(torch.load(autoencoder_path))
     
     # Load WikiText evaluation texts
@@ -355,12 +326,8 @@ def run_benchmark(
         "baseline_perplexity": baseline_ppl,
         "compressed_perplexity": compressed_ppl,
         "longbench_results": longbench_results,
-<<<<<<< HEAD
-        "config": cfg
-=======
         "config": cfg,
         "buffer_size": cfg.get('buffer_size', 512)
->>>>>>> main
     }
     
     # Save results and create visualizations
@@ -377,33 +344,12 @@ def run_benchmark(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-<<<<<<< HEAD
-    parser.add_argument("--model", type=str, required=True, help="Model name")
-    parser.add_argument("--autoencoder", type=str, required=True, help="Path to autoencoder model")
-    parser.add_argument("--latent_dim", type=int, required=True, help="Latent dimension")
-    parser.add_argument("--cache_sizes", type=float, nargs="+", required=True, help="Cache sizes to test")
-    parser.add_argument("--batch_size", type=int, default=1024, help="Batch size")
-    parser.add_argument("--num_runs", type=int, default=5, help="Number of runs for timing")
-    parser.add_argument("--output", type=str, required=True, help="Output directory")
-=======
->>>>>>> main
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
     args = parser.parse_args()
     
     with open(args.config, "r") as f:
         cfg = json.load(f)
     
-<<<<<<< HEAD
-    run_benchmark(
-        args.model,
-        args.autoencoder,
-        args.latent_dim,
-        args.cache_sizes,
-        args.batch_size,
-        args.num_runs,
-        args.output,
-        cfg
-=======
     output_dir = cfg.get("output_dir", os.path.dirname(args.config))
     
     run_benchmark(
@@ -412,5 +358,4 @@ if __name__ == "__main__":
         cfg["latent_dim"],
         output_dir,
         cfg,
->>>>>>> main
     ) 

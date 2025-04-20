@@ -18,11 +18,7 @@ warnings.filterwarnings("ignore", message=".*scaled_dot_product_attention.*")
 class Buffer():
     """
     Buffer for storing KV vectors and queries for training the autoencoder.
-<<<<<<< HEAD
-    This version is adapted for quick CPU testing using "distilgpt2".
-=======
     This optimized version uses less memory by reducing buffer sizes and adding explicit memory management.
->>>>>>> main
     """
     def __init__(self, cfg, model, tokenizer, texts):
         self.cfg = cfg
@@ -33,15 +29,6 @@ class Buffer():
             self.tokenizer.pad_token = self.tokenizer.eos_token or self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         
         # Get actual model configuration
-<<<<<<< HEAD
-        self.num_heads = model.config.n_head
-        self.hidden_size = model.config.hidden_size
-        self.head_dim = self.hidden_size // self.num_heads
-        
-        # Update config with actual model values
-        self.cfg["num_key_value_heads"] = self.num_heads
-        self.cfg["head_dim"] = self.head_dim
-=======
         if cfg.get("name").split("/")[0] == "Qwen":
             self.num_heads = model.config.num_attention_heads
             self.hidden_size = model.config.hidden_size
@@ -75,7 +62,6 @@ class Buffer():
         self.head_dim = self.hidden_size // self.num_heads
         
         
->>>>>>> main
         
         # Filter out empty texts and ensure minimum length
         self.texts = [text for text in texts if text.strip() and len(text.split()) >= 3]
@@ -84,16 +70,6 @@ class Buffer():
             
         self.device = cfg["device"]
         
-<<<<<<< HEAD
-        # Pre-allocate buffers for keys, values, and queries
-        # Shape: (batch_size * buffer_mult, num_layers, num_heads, seq_len, head_dim)
-        self.keys_buffer = torch.zeros(
-            (cfg["batch_size"] * cfg["buffer_mult"], cfg["num_hidden_layers"], self.num_heads, cfg["max_seq_len"], self.head_dim),
-            device=self.device
-        )
-        self.values_buffer = torch.zeros_like(self.keys_buffer)
-        self.queries_buffer = torch.zeros_like(self.keys_buffer)
-=======
         # Get data type from config and convert to torch dtype
         if "dtype" in cfg:
             if isinstance(cfg["dtype"], str):
@@ -173,7 +149,6 @@ class Buffer():
                     self.keys_buffer = torch.zeros(buffer_size, device=self.device, dtype=self.dtype)
                     self.values_buffer = torch.zeros_like(self.keys_buffer)
                     self.queries_buffer = torch.zeros_like(self.keys_buffer)
->>>>>>> main
         
         self.text_pointer = 0
         random.shuffle(self.texts)
@@ -184,16 +159,11 @@ class Buffer():
         self.pointer = 0
         
         while self.pointer < self.keys_buffer.shape[0]:
-<<<<<<< HEAD
-            # Grab a mini-batch of texts.
-            batch_texts = self.texts[self.text_pointer:self.text_pointer + self.cfg["lm_batch_size"]]
-=======
             # Get lm_batch_size with default
             lm_batch_size = self.cfg.get("lm_batch_size", 1)  # Default to 1 if not specified
             
             # Grab a mini-batch of texts.
             batch_texts = self.texts[self.text_pointer:self.text_pointer + lm_batch_size]
->>>>>>> main
             if not batch_texts:
                 self.text_pointer = 0
                 random.shuffle(self.texts)
@@ -203,11 +173,7 @@ class Buffer():
                 batch_texts, 
                 padding=True, 
                 truncation=True, 
-<<<<<<< HEAD
-                max_length=self.cfg["max_seq_len"], 
-=======
                 max_length=self.buffer_seq_len,  # Use reduced sequence length
->>>>>>> main
                 return_tensors="pt"
             )
             
@@ -251,21 +217,6 @@ class Buffer():
                 
                 # Store in buffers - only up to actual sequence length
                 buffer_slice_size = min(self.keys_buffer.shape[0] - self.pointer, batch_size)
-<<<<<<< HEAD
-                
-                # Store in buffers
-                self.keys_buffer[self.pointer:self.pointer + buffer_slice_size, l, :num_heads, :seq_len, :head_dim] = keys[:buffer_slice_size, :num_heads, :seq_len, :head_dim]
-                self.values_buffer[self.pointer:self.pointer + buffer_slice_size, l, :num_heads, :seq_len, :head_dim] = values[:buffer_slice_size, :num_heads, :seq_len, :head_dim]
-                self.queries_buffer[self.pointer:self.pointer + buffer_slice_size, l, :num_heads, :seq_len, :head_dim] = queries[:buffer_slice_size, :num_heads, :seq_len, :head_dim]
-
-            self.pointer += buffer_slice_size
-            self.text_pointer += self.cfg["lm_batch_size"]
-            
-            if self.text_pointer > len(self.texts) - self.cfg["lm_batch_size"]:
-                self.text_pointer = 0
-                random.shuffle(self.texts)
-
-=======
                 actual_seq_len = min(seq_len, self.buffer_seq_len)
                 
                 # Store in buffers
@@ -283,7 +234,6 @@ class Buffer():
             # Release some memory after each batch
             torch.cuda.empty_cache()
 
->>>>>>> main
         # Shuffle the buffers
         self.pointer = 0
         indices = torch.randperm(self.keys_buffer.shape[0], device=self.device)
@@ -301,15 +251,6 @@ class Buffer():
                 - queries is a tensor
                 All tensors have shape (batch_size, num_layers, num_heads, seq_len, head_dim)
         """
-<<<<<<< HEAD
-        # Get the next batch
-        keys = self.keys_buffer[self.pointer:self.pointer + self.cfg["batch_size"]]
-        values = self.values_buffer[self.pointer:self.pointer + self.cfg["batch_size"]]
-        queries = self.queries_buffer[self.pointer:self.pointer + self.cfg["batch_size"]]
-        
-        self.pointer += self.cfg["batch_size"]
-        if self.pointer > self.keys_buffer.shape[0] - self.cfg["batch_size"]:
-=======
         # Get batch size with default
         batch_size = self.cfg.get("batch_size", 2)  # Default to 2 if not specified
         
@@ -320,7 +261,6 @@ class Buffer():
         
         self.pointer += batch_size
         if self.pointer > self.keys_buffer.shape[0] - batch_size:
->>>>>>> main
             self.refresh()
             
         return (keys, values), queries
@@ -333,11 +273,7 @@ if __name__ == "__main__":
         "buffer_mult": 2,
         "lm_batch_size": 1,
         "num_hidden_layers": 6,       # distilgpt2 has 6 layers
-<<<<<<< HEAD
-        "num_key_value_heads": 12,    # as in the model config
-=======
         "num_attention_heads": 12,    # as in the model config
->>>>>>> main
         "head_dim": 64,               # 768/12 = 64
         "max_seq_len": 128,           # maximum sequence length
         "device": torch.device("cpu")

@@ -27,8 +27,8 @@ The program is designed to run the experiments using a single config file. Under
 Below are the provided, supported config files and ways to run our experiment:
 
 ```bash
-./run_experiments.sh /n/holylabs/LABS/meng_lab/Lab/learned-kv-compression/configs/qwen25_7b_experiment.json
-./run_experiments.sh /n/holylabs/LABS/meng_lab/Lab/learned-kv-compression/configs/qwen25_3b_experiment.json
-./run_experiments.sh /n/holylabs/LABS/meng_lab/Lab/learned-kv-compression/configs/qwen25_1.5b_experiment.json
-./run_experiments.sh /n/holylabs/LABS/meng_lab/Lab/learned-kv-compression/configs/qwen25_0.5b_experiment.json
+./run_experiments.sh configs/qwen25_7b_experiment.json
+./run_experiments.sh configs/qwen25_3b_experiment.json
+./run_experiments.sh configs/qwen25_1.5b_experiment.json
+./run_experiments.sh configs/qwen25_0.5b_experiment.json
 ```

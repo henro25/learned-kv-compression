@@ -15,34 +15,6 @@ import argparse
 import subprocess
 import time
 import json
-<<<<<<< HEAD
-from pathlib import Path
-from typing import List, Dict, Any
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Run KV Cache Compression Experiments")
-    parser.add_argument("--model", type=str, default="distilgpt2", 
-                        help="Model name to use for experiments")
-    parser.add_argument("--latent_dims", type=int, nargs="+", default=[8, 16, 32], 
-                        help="Latent dimensions to test")
-    parser.add_argument("--cache_sizes", type=float, nargs="+", 
-                        default=[1, 10, 100, 1000],
-                        help="KV cache sizes in MB to test")
-    parser.add_argument("--num_epochs", type=int, default=5, 
-                        help="Number of epochs for training")
-    parser.add_argument("--num_train_texts", type=int, default=100, 
-                        help="Number of training texts to use")
-    parser.add_argument("--batch_size", type=int, default=64,
-                        help="Batch size for compression operations")
-    parser.add_argument("--num_runs", type=int, default=5,
-                        help="Number of runs for timing statistics")
-    parser.add_argument("--skip_training", action="store_true",
-                        help="Skip training and use existing models")
-    parser.add_argument("--output_dir", type=str, default="experiment_results",
-                        help="Directory to save results")
-    parser.add_argument("--config", type=str, default="src/configs/default_config.json",
-                        help="Path to config file")
-=======
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Union, Optional
@@ -51,7 +23,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run KV Cache Compression Experiments")
     parser.add_argument("--config", type=str, required=True,
                         help="Path to experiment configuration file")
->>>>>>> main
     return parser.parse_args()
 
 def load_config(config_path: str) -> Dict[str, Any]:
@@ -59,18 +30,11 @@ def load_config(config_path: str) -> Dict[str, Any]:
     with open(config_path, "r") as f:
         return json.load(f)
 
-<<<<<<< HEAD
-def train_autoencoder(model_name: str, latent_dim: int, num_epochs: int, 
-                     num_train_texts: int, output_dir: str, cfg: Dict[str, Any]) -> str:
-    """Train an autoencoder with the specified parameters."""
-    model_dir = os.path.join(output_dir, f"{model_name}_latent{latent_dim}")
-=======
 def train_autoencoder(model_name: str, latent_dim: int, learning_rate: float, num_epochs: int, 
                      num_train_texts: int, output_dir: str, cfg: Dict[str, Any]) -> str:
     """Train an autoencoder with the specified parameters."""
     safe_model_name = model_name.replace("/", "_")
     model_dir = os.path.join(output_dir, f"{safe_model_name}_latent{latent_dim}_lr{learning_rate}")
->>>>>>> main
     os.makedirs(model_dir, exist_ok=True)
     
     print("MODEL DIR: ", model_dir)
@@ -78,13 +42,9 @@ def train_autoencoder(model_name: str, latent_dim: int, learning_rate: float, nu
     # Update config with training parameters
     train_cfg = cfg.copy()
     train_cfg.update({
-<<<<<<< HEAD
-        "latent_dim": latent_dim,
-=======
         "name": model_name,  # Ensure model name is passed to trainer
         "latent_dim": latent_dim,
         "lr": learning_rate,
->>>>>>> main
         "num_epochs": num_epochs,
         "num_train_texts": num_train_texts,
         "output_dir": model_dir
@@ -97,15 +57,7 @@ def train_autoencoder(model_name: str, latent_dim: int, learning_rate: float, nu
     
     cmd = [
         "python", "-m", "src.dictionary_learning.train",
-<<<<<<< HEAD
-        "--config", config_path,
-        "--latent_dim", str(latent_dim),
-        "--num_epochs", str(num_epochs),
-        "--num_train_texts", str(num_train_texts),
-        "--output_dir", model_dir
-=======
         "--config", config_path
->>>>>>> main
     ]
     
     print(f"\n{'='*80}")
@@ -119,23 +71,6 @@ def train_autoencoder(model_name: str, latent_dim: int, learning_rate: float, nu
 
 def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int, 
                  cache_sizes: List[float], batch_size: int, num_runs: int, 
-<<<<<<< HEAD
-                 output_dir: str, cfg: Dict[str, Any]) -> str:
-    """Run benchmarks with the trained autoencoder."""
-    result_dir = os.path.join(output_dir, f"benchmark_{model_name}_latent{latent_dim}")
-    os.makedirs(result_dir, exist_ok=True)
-    
-    # Update config with benchmark parameters
-    benchmark_cfg = cfg.copy()
-    benchmark_cfg.update({
-        "model_name": model_name,
-        "latent_dim": latent_dim,
-        "batch_size": batch_size,
-        "num_runs": num_runs,
-        "cache_sizes": cache_sizes
-    })
-    
-=======
                  output_dir: str, cfg: Dict[str, Any], learning_rate: Optional[float] = None) -> str:
     """Run benchmarks with the trained autoencoder."""
     safe_model_name = model_name.replace("/", "_")
@@ -158,7 +93,6 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
         "learning_rate": learning_rate
     })
 
->>>>>>> main
     # Save updated config
     config_path = os.path.join(result_dir, "benchmark_config.json")
     with open(config_path, "w") as f:
@@ -166,17 +100,6 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
     
     cmd = [
         "python", "-m", "src.inference.benchmark",
-<<<<<<< HEAD
-        "--model", model_name,
-        "--autoencoder", autoencoder_path,
-        "--latent_dim", str(latent_dim),
-        "--cache_sizes"
-    ] + [str(s) for s in cache_sizes] + [
-        "--batch_size", str(batch_size),
-        "--num_runs", str(num_runs),
-        "--output", result_dir,
-=======
->>>>>>> main
         "--config", config_path
     ]
     
@@ -253,39 +176,6 @@ def main():
     # Keep track of all experiment results
     all_results = []
     
-<<<<<<< HEAD
-    for latent_dim in args.latent_dims:
-        
-        # Train autoencoder (unless skipped)
-        if not args.skip_training:
-            model_path = train_autoencoder(
-                model_name=args.model,
-                latent_dim=latent_dim,
-                num_epochs=args.num_epochs,
-                num_train_texts=args.num_train_texts,
-                output_dir=args.output_dir,
-                cfg=cfg
-            )
-        else:
-            # Use existing model if skipping training
-            model_path = os.path.join(args.output_dir, "autoencoder_final.pth")
-            if not os.path.exists(model_path):
-                print(f"Warning: Model {model_path} not found. Skipping latent_dim={latent_dim}.")
-                continue
-        
-        # Run benchmarks
-        result_dir = run_benchmark(
-            model_name=args.model,
-            autoencoder_path=model_path,
-            latent_dim=latent_dim,
-            cache_sizes=args.cache_sizes,
-            batch_size=args.batch_size,
-            num_runs=args.num_runs,
-            output_dir=args.output_dir,
-            cfg=cfg
-        )
-        model_results.append((latent_dim, result_dir))
-=======
     # Run experiments for all combinations of parameters
     for model_name in models:
         # Create a model-specific output directory
@@ -346,7 +236,6 @@ def main():
                                     "num_runs": num_runs,
                                     "result_dir": result_dir
                                 })
->>>>>>> main
     
     # Calculate total runtime
     total_time = time.time() - start_time
