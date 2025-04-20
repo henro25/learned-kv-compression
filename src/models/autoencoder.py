@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 class Autoencoder(nn.Module):
-    def __init__(self, input_dim, latent_dim):
+    def __init__(self, input_dim, latent_dim, dtype=None):
         super(Autoencoder, self).__init__()
         # Encoder: compress from input_dim to latent_dim.
         self.encoder = nn.Sequential(
@@ -20,8 +20,17 @@ class Autoencoder(nn.Module):
         self.decoder = nn.Sequential(
             nn.Linear(latent_dim, input_dim)
         )
+        
+        # Convert model parameters to specified dtype if provided
+        if dtype is not None:
+            self.to(dtype)
     
     def forward(self, x):
+        # Ensure input and model parameters use the same dtype
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+        x = x.to(device=device, dtype=dtype)
+        
         z = self.encoder(x)
         x_recon = self.decoder(z)
         return x_recon, z

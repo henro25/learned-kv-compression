@@ -20,20 +20,14 @@ cd learned-kv-compression
 pip install -r requirements.txt
 ```
 
-## Project Structure
+## To Run
 
-- `src/models/autoencoder.py`: Autoencoder implementation for compressing KV cache vectors
-- `src/utils/buffer.py`: Buffer for extracting KV cache examples from a pre-trained model
-- `src/dictionary_learning/train.py`: Script for training the autoencoder on WikiText data
-- `src/inference/inference.py`: Utilities for inference with compressed KV caches
-- `src/inference/benchmark.py`: Benchmarking script to measure time to first token and other metrics
-- `src/configs/`: Configuration files for different models and experiments
+The program is designed to run the experiments using a single config file. Under the hood, we are loading the model, training it in src/dictionary_learning/train.py, and then running benchmarks afterwards in src/inference/benchmark.
 
-## Training an Autoencoder
-
-To train an autoencoder for KV cache compression:
+Below are the provided, supported config files and ways to run our experiment:
 
 ```bash
+<<<<<<< HEAD
 python -m src.dictionary_learning.train \
     --name distilgpt2 \
     --latent_dim 16 \
@@ -112,3 +106,10 @@ If you use this code in your research, please cite:
   howpublished = {\url{https://github.com/yourusername/learned-kv-compression}}
 }
 ```
+=======
+./run_experiments.sh /n/holylabs/LABS/meng_lab/Lab/learned-kv-compression/configs/qwen25_7b_experiment.json
+./run_experiments.sh /n/holylabs/LABS/meng_lab/Lab/learned-kv-compression/configs/qwen25_3b_experiment.json
+./run_experiments.sh /n/holylabs/LABS/meng_lab/Lab/learned-kv-compression/configs/qwen25_1.5b_experiment.json
+./run_experiments.sh /n/holylabs/LABS/meng_lab/Lab/learned-kv-compression/configs/qwen25_0.5b_experiment.json
+```
+>>>>>>> main

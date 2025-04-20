@@ -1,0 +1,34 @@
+{
+  "models": [
+    "Qwen/Qwen2.5-7B"
+  ],
+  "latent_dims": [
+    8,
+    16,
+    32
+  ],
+  "num_epochs": 5,
+  "num_train_texts": 10000,
+  "seed": 42,
+  "skip_training": false,
+  "output_dir": "experiment_results_Qwen/Qwen_Qwen2.5-7B/Qwen_Qwen2.5-7B_latent8",
+  "eval_interval": 100,
+  "num_eval_texts": 200,
+  "lm_batch_size": 1,
+  "buffer_size": 256,
+  "batch_size": 8,
+  "dtype": "bf16",
+  "lr": 0.0001,
+  "buffer_mult": 2,
+  "gradient_accumulation_steps": 8,
+  "device": "cuda",
+  "name": "Qwen/Qwen2.5-7B",
+  "input_dim": 128,
+  "head_dim": 128,
+  "num_hidden_layers": 28,
+  "num_attention_heads": 28,
+  "max_seq_len": 8192,
+  "hidden_size": 3584,
+  "vocab_size": 151936,
+  "latent_dim": 8
+}
