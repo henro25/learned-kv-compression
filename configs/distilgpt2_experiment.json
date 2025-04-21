@@ -1,9 +1,9 @@
 {
     "models": ["distilgpt2"],
     "latent_dims": [8, 16, 32],
-    "learning_rates": [1e-3, 5e-4, 1e-4],
-    "num_epochs": [20],
-    "num_train_texts": [10000],
+    "learning_rates": [1e-3, 5e-4],
+    "num_epochs": [1],
+    "num_train_texts": [100],
     "seed": 42,
     "skip_training": false,
     "output_dir": "experiment_results_distilgpt2",
