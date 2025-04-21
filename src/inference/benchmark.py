@@ -73,9 +73,12 @@ def compress_kv_cache(past_key_values, autoencoder):
         # layer_past should be (key_tensor, value_tensor)
         keys, values = layer_past 
         
+        # Infer device from autoencoder parameters
+        ae_device = next(autoencoder.parameters()).device
+
         # Ensure tensors are on the same device as the autoencoder
-        keys = keys.to(autoencoder.device)
-        values = values.to(autoencoder.device)
+        keys = keys.to(ae_device)
+        values = values.to(ae_device)
 
         # Get original shapes and head_dim
         batch_size, num_heads, seq_len, head_dim = keys.shape
