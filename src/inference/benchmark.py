@@ -301,9 +301,13 @@ def run_benchmark(
             use_cache=True
         )
     
+    # Explicitly cast model to the desired dtype after loading
+    model = model.to(dtype=dtype)
+    
     # Load trained autoencoder
-    autoencoder = Autoencoder(input_dim=head_dim, latent_dim=latent_dim).to(device)
+    autoencoder = Autoencoder(input_dim=head_dim, latent_dim=latent_dim, dtype=dtype).to(device)
     autoencoder.load_state_dict(torch.load(autoencoder_path))
+    autoencoder = autoencoder.to(dtype=dtype) # Also ensure AE is cast
     
     # Load WikiText evaluation texts
     dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
