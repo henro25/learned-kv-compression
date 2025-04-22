@@ -10,9 +10,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import torch
-import torch.optim as optim
 import torch.nn as nn
-from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 import argparse
 import json
@@ -24,7 +22,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
 from datasets import load_dataset
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, AdamW, get_cosine_schedule_with_warmup
 from src.models.autoencoder import Autoencoder
 from src.utils.buffer import Buffer
 
@@ -144,10 +142,22 @@ def main(cfg):
     train_buffer = Buffer(cfg, model, tokenizer, texts_train)
     eval_buffer  = Buffer(cfg, model, tokenizer, texts_test)
 
-    optimizer = optim.Adam([p for ae in autoencoders for p in ae.parameters()], lr=cfg["lr"])
-    scheduler = CosineAnnealingLR(optimizer, T_max=cfg["num_epochs"], eta_min=0)
+    # Compute number of updates per epoch
     batches_per_epoch = len(texts_train) // cfg["batch_size"]
-    best_eval_loss = float('inf')
+    # Setup AdamW optimizer with weight decay and cosine scheduler with warmup
+    total_steps = (batches_per_epoch // cfg["gradient_accumulation_steps"]) * cfg["num_epochs"]
+    warmup_steps = int(cfg.get("warmup_ratio", 0.1) * total_steps)
+    optimizer = AdamW(
+        [p for ae in autoencoders for p in ae.parameters()],
+        lr=cfg["lr"],
+        weight_decay=cfg.get("weight_decay", 1e-3),
+        betas=(0.9, 0.999)
+    )
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=total_steps
+    )
 
     for epoch in range(cfg["num_epochs"]):
         for ae in autoencoders:
@@ -173,7 +183,13 @@ def main(cfg):
             loss = F.mse_loss(recon_attn, orig_attn) / cfg["gradient_accumulation_steps"]
             loss.backward()
             if (i+1) % cfg["gradient_accumulation_steps"] == 0 or (i+1) == batches_per_epoch:
+                # Clip gradients before stepping
+                torch.nn.utils.clip_grad_norm_(
+                    [p for ae in autoencoders for p in ae.parameters() if p.grad is not None],
+                    max_norm=cfg.get("max_grad_norm", 1.0)
+                )
                 optimizer.step()
+                scheduler.step()
                 optimizer.zero_grad()
                 torch.cuda.empty_cache()
             epoch_loss += loss.item() * B * cfg["gradient_accumulation_steps"]
@@ -188,6 +204,7 @@ def main(cfg):
         print(f"Saved {path}")
 
         if (epoch+1) % cfg["eval_interval"] == 0:
+            # Periodic evaluation (no best-model checkpoint saved)
             for ae in autoencoders:
                 ae.eval()
             eval_losses = []
@@ -210,10 +227,6 @@ def main(cfg):
                 eval_losses.append(F.mse_loss(recon_attn, orig_attn).item())
             avg_eval = np.mean(eval_losses)
             writer.add_scalar('Loss/eval', avg_eval, epoch+1)
-            if avg_eval < best_eval_loss:
-                best_eval_loss = avg_eval
-                torch.save(ckpt, os.path.join(cfg["output_dir"], "autoencoders_best.pth"))
-                print("New best model saved")
 
     final_ckpt = {f"layer_{i}": ae.state_dict() for i, ae in enumerate(autoencoders)}
     torch.save(final_ckpt, os.path.join(cfg["output_dir"], "autoencoders_final.pth"))
