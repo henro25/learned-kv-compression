@@ -38,7 +38,7 @@ def calculate_perplexity(model, tokenizer, texts, max_length=1024):
     perplexity = torch.exp(torch.tensor(total_loss / total_tokens)).item()
     return perplexity
 
-def compress_kv_cache(past_key_values, autoencoders):
+def compress_kv_cache(past_key_values, autoencoders, quantization_bits=None):
     if past_key_values is None:
         return None
     reconstructed = []
@@ -47,14 +47,23 @@ def compress_kv_cache(past_key_values, autoencoders):
         B, H, S, D = keys.shape
         k_flat = keys.reshape(-1, D)
         v_flat = values.reshape(-1, D)
-        k_rec_flat, _ = ae(k_flat)
-        v_rec_flat, _ = ae(v_flat)
+        # Encode to latent space
+        k_latent, _ = ae(k_flat)
+        v_latent, _ = ae(v_flat)
+        # Quantize latent if requested
+        if quantization_bits:
+            scale = 2 ** (quantization_bits - 1) - 1
+            k_latent = torch.round(torch.clamp(k_latent * scale, -scale, scale - 1)) / scale
+            v_latent = torch.round(torch.clamp(v_latent * scale, -scale, scale - 1)) / scale
+        # Decode from latent
+        k_rec_flat = ae.decoder(k_latent)
+        v_rec_flat = ae.decoder(v_latent)
         k_rec = k_rec_flat.reshape(B, H, S, D)
         v_rec = v_rec_flat.reshape(B, H, S, D)
         reconstructed.append((k_rec, v_rec))
     return DynamicCache.from_legacy_cache(past_key_values=tuple(reconstructed))
 
-def evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, max_length=1024):
+def evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, max_length=1024, quantization_bits=None):
     model.eval()
     for ae in autoencoders:
         ae.eval()
@@ -75,7 +84,7 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, max_le
                     past_key_values=past,
                     use_cache=True
                 )
-                past = compress_kv_cache(out.past_key_values, autoencoders)
+                past = compress_kv_cache(out.past_key_values, autoencoders, quantization_bits)
                 logits = out.logits[..., -1, :]
                 loss = F.cross_entropy(logits, input_ids[:, t+1], reduction='none')
                 total_loss += loss.item()
@@ -96,7 +105,7 @@ def evaluate_longbench(model, tokenizer, autoencoders, cfg):
             texts = texts[:num_eval]
         # Calculate baseline and compressed perplexities on this subset
         base_ppl = calculate_perplexity(model, tokenizer, texts, cfg["max_seq_len"])
-        comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, cfg["max_seq_len"])
+        comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, cfg["max_seq_len"], cfg.get("quantization_bits"))
         results["baseline"][s] = base_ppl
         results["compressed"][s] = comp_ppl
     return results
@@ -135,8 +144,11 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
     num_eval = cfg.get("num_eval_texts")
     all_texts = [t for t in ds["test"]["text"] if t.strip()]
     txts = all_texts[:num_eval] if num_eval is not None else all_texts
+    # Compute baseline PPL
     base_ppl = calculate_perplexity(model, tokenizer, txts, cfg["max_seq_len"])
-    comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, txts, cfg["max_seq_len"])
+    # Compute compressed PPL with quantization bits
+    quant_bits = cfg.get("quantization_bits")
+    comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, txts, cfg["max_seq_len"], quant_bits)
     longbench = evaluate_longbench(model, tokenizer, autoencoders, cfg)
     results = {
         "baseline_perplexity": base_ppl,
