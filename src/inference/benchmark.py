@@ -40,31 +40,34 @@ def calculate_perplexity(model, tokenizer, texts, max_length=1024):
 
 def compress_kv_cache(past_key_values, autoencoders, quantization_bits=None):
     reconstructed = []
+    # Helper to quantize latent tensor based on dynamic symmetric range
+    def quantize_tensor(x, bits):
+        scale = 2 ** (bits - 1) - 1
+        max_val = x.abs().max()
+        if max_val == 0:
+            return x
+        x_norm = x / max_val
+        x_q_norm = torch.round(torch.clamp(x_norm * scale, -scale, scale)) / scale
+        return x_q_norm * max_val
     for i, (keys, values) in enumerate(past_key_values):
         ae = autoencoders[i]
         B, H, S, D = keys.shape
         # Flatten for encoding
-        k_flat = keys.view(-1, D)
-        v_flat = values.view(-1, D)
+        k_flat = keys.reshape(-1, D)
+        v_flat = values.reshape(-1, D)
         # Encode to latent space
         k_latent = ae.encoder(k_flat)
         v_latent = ae.encoder(v_flat)
-        # Apply dynamic symmetric quantization to latent if requested
+        # Quantize latent codes if requested
         if quantization_bits:
-            # Quantize each layer's latent to specified bitwidth
-            scale = 2 ** (quantization_bits - 1) - 1
-            max_k = k_latent.abs().max() if k_latent.numel() > 0 else 0
-            max_v = v_latent.abs().max() if v_latent.numel() > 0 else 0
-            if max_k != 0:
-                k_latent = torch.round(torch.clamp(k_latent / max_k * scale, -scale, scale)) / scale * max_k
-            if max_v != 0:
-                v_latent = torch.round(torch.clamp(v_latent / max_v * scale, -scale, scale)) / scale * max_v
+            k_latent = quantize_tensor(k_latent, quantization_bits)
+            v_latent = quantize_tensor(v_latent, quantization_bits)
         # Decode from latent
         k_rec_flat = ae.decoder(k_latent)
         v_rec_flat = ae.decoder(v_latent)
         # Reshape back
-        k_rec = k_rec_flat.view(B, H, S, D)
-        v_rec = v_rec_flat.view(B, H, S, D)
+        k_rec = k_rec_flat.reshape(B, H, S, D)
+        v_rec = v_rec_flat.reshape(B, H, S, D)
         reconstructed.append((k_rec, v_rec))
     return DynamicCache.from_legacy_cache(past_key_values=tuple(reconstructed))
 
@@ -97,13 +100,50 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, max_le
     perplexity = torch.exp(torch.tensor(total_loss / total_tokens)).item()
     return perplexity
 
+def evaluate_with_kv_quantization(model, tokenizer, texts, max_length=1024, quantization_bits=None):
+    """
+    Measure perplexity by streaming and quantizing the KV cache at each step (no autoencoder).
+    """
+    model.eval()
+    total_loss = 0
+    total_tokens = 0
+    with torch.no_grad():
+        for text in tqdm(texts, desc="Eval quantized KV baseline"):
+            inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_length)
+            input_ids = inputs["input_ids"].to(model.device)
+            mask = inputs["attention_mask"].to(model.device)
+            past = None
+            for t in range(input_ids.size(1) - 1):
+                if not mask[0, t+1]:
+                    continue
+                out = model(
+                    input_ids[:, t:t+1],
+                    attention_mask=mask[:, t:t+1],
+                    past_key_values=past,
+                    use_cache=True
+                )
+                # Quantize the KV cache
+                new_past = []
+                for k, v in out.past_key_values:
+                    if quantization_bits:
+                        k = torch.clamp(torch.round(k * (2**(quantization_bits-1)-1)), -2**(quantization_bits-1), 2**(quantization_bits-1)-1) / (2**(quantization_bits-1)-1) * k.abs().max()
+                        v = torch.clamp(torch.round(v * (2**(quantization_bits-1)-1)), -2**(quantization_bits-1), 2**(quantization_bits-1)-1) / (2**(quantization_bits-1)-1) * v.abs().max()
+                    new_past.append((k, v))
+                past = tuple(new_past)
+                logits = out.logits[..., -1, :]
+                loss = F.cross_entropy(logits, input_ids[:, t+1], reduction='none')
+                total_loss += loss.item()
+                total_tokens += 1
+    return torch.exp(torch.tensor(total_loss / total_tokens)).item()
+
 def evaluate_longbench(model, tokenizer, autoencoders, cfg, quantization_bits=None):
     subsets = ['narrativeqa', 'hotpotqa', '2wikimqa', 'musique', 'dureader']
     results = {"baseline": {}, "compressed": {}}
     # Number of evaluation texts for LongBench from config
     num_eval = cfg.get("num_eval_texts")
     for s in subsets:
-        all_inputs = load_dataset("THUDM/LongBench", s)["test"]["input"]
+        # Load LongBench using trust_remote_code to suppress custom code warning
+        all_inputs = load_dataset("THUDM/LongBench", s, trust_remote_code=True)["test"]["input"]
         # Filter out empty strings and limit to num_eval texts
         texts = [t for t in all_inputs if t.strip()]
         if num_eval is not None:
@@ -149,14 +189,17 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
     num_eval = cfg.get("num_eval_texts")
     all_texts = [t for t in ds["test"]["text"] if t.strip()]
     txts = all_texts[:num_eval] if num_eval is not None else all_texts
-    # Compute baseline PPL
+    # Compute baseline perplexity (no compression)
     base_ppl = calculate_perplexity(model, tokenizer, txts, cfg["max_seq_len"])
-    # Compute compressed PPL with quantization bits
+    # Compute baseline quantized-KV perplexity
     quant_bits = cfg.get("quantization_bits")
+    quant_kv_ppl = evaluate_with_kv_quantization(model, tokenizer, txts, cfg["max_seq_len"], quant_bits) if quant_bits else None
+    # Compute compressed PPL with autoencoder + quantization
     comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, txts, cfg["max_seq_len"], quant_bits)
     longbench = evaluate_longbench(model, tokenizer, autoencoders, cfg, quant_bits)
     results = {
         "baseline_perplexity": base_ppl,
+        "quantized_kv_baseline_perplexity": quant_kv_ppl,
         "compressed_perplexity": comp_ppl,
         "longbench_results": longbench,
         "config": cfg
