@@ -6,6 +6,7 @@
     "num_train_texts": [100],
     "seed": 42,
     "skip_training": false,
+    "quantization_bits": [2, 4, 8, 16],
     "output_dir": "experiment_results_distilgpt2",
   
     "eval_interval": 1000,
@@ -25,5 +26,6 @@
     "num_attention_heads": 12,
     "max_seq_len": 1024,
     "hidden_size": 768,
-    "vocab_size": 50257
+    "vocab_size": 50257,
+    "cache_sizes": [1, 10, 100, 1000]
   } 
