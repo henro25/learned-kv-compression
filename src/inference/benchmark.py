@@ -50,11 +50,12 @@ def compress_kv_cache(past_key_values, autoencoders, quantization_bits=None):
         # Encode to latent space using the autoencoder encoder
         k_latent = ae.encoder(k_flat)
         v_latent = ae.encoder(v_flat)
-        # Quantize latent if requested
+        # Quantize latent if requested (static symmetric quantization)
         if quantization_bits:
             scale = 2 ** (quantization_bits - 1) - 1
-            k_latent = torch.round(torch.clamp(k_latent * scale, -scale, scale - 1)) / scale
-            v_latent = torch.round(torch.clamp(v_latent * scale, -scale, scale - 1)) / scale
+            # Scale and round
+            k_latent = torch.round(torch.clamp(k_latent * scale, -scale, scale)) / scale
+            v_latent = torch.round(torch.clamp(v_latent * scale, -scale, scale)) / scale
         # Decode from latent using autoencoder decoder
         k_rec_flat = ae.decoder(k_latent)
         v_rec_flat = ae.decoder(v_latent)
