@@ -203,6 +203,11 @@ def main():
                                 output_dir=model_output_dir,
                                 cfg=experiment_cfg
                             )
+                            print(f"Training finished for {model_id}. Checking for model file...")
+                            time.sleep(5) # Add a pause
+                            check_cmd = f"ls -l {model_path}"
+                            print(f"Running check: {check_cmd}")
+                            subprocess.run(check_cmd, shell=True) # Check if file exists
                         else:
                             # Use existing model if skipping training
                             model_dir = os.path.join(model_output_dir, f"{safe_model_name}_latent{latent_dim}_lr{learning_rate}")
@@ -210,6 +215,8 @@ def main():
                             if not os.path.exists(model_path):
                                 print(f"Warning: Model {model_path} not found. Skipping this configuration.")
                                 continue
+                            
+                        
                         
                         # Run benchmarks with various batch sizes and run counts
                         for batch_size in batch_sizes:
