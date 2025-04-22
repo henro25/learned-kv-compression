@@ -23,6 +23,7 @@ import torch.nn as nn
 import seaborn as sns
 import pandas as pd
 from typing import List, Dict
+from transformers.cache_utils import DynamicCache
 
 from src.inference.inference import KVCacheInference
 
@@ -61,22 +62,46 @@ def calculate_perplexity(model, tokenizer, texts, max_length=1024):
     return perplexity
 
 def compress_kv_cache(past_key_values, autoencoder):
-    """Compress the KV cache using the autoencoder."""
+    """Compress the KV cache using the autoencoder and return a new Cache object."""
     if past_key_values is None:
         return None
         
-    compressed_cache = []
-    for layer in past_key_values:
-        keys, values = layer
-        # Compress keys and values
-        k_compressed, _ = autoencoder(keys.reshape(-1, keys.size(-1)))
-        v_compressed, _ = autoencoder(values.reshape(-1, values.size(-1)))
+    # Assuming past_key_values is a Cache object (like DynamicCache)
+    # It typically behaves like a list of tuples [(key_layer_0, value_layer_0), ...]
+    reconstructed_cache_tuples = []
+    for layer_past in past_key_values:
+        # layer_past should be (key_tensor, value_tensor)
+        keys, values = layer_past 
+        
+        # Infer device from autoencoder parameters
+        ae_device = next(autoencoder.parameters()).device
+
+        # Ensure tensors are on the same device as the autoencoder
+        keys = keys.to(ae_device)
+        values = values.to(ae_device)
+
+        # Get original shapes and head_dim
+        batch_size, num_heads, seq_len, head_dim = keys.shape
+        
+        # Flatten for autoencoder
+        keys_flat = keys.reshape(-1, head_dim)
+        values_flat = values.reshape(-1, head_dim)
+
+        # Compress and reconstruct
+        k_recon_flat, _ = autoencoder(keys_flat)
+        v_recon_flat, _ = autoencoder(values_flat)
         
         # Reshape back to original dimensions
-        k_compressed = k_compressed.reshape(keys.shape)
-        v_compressed = v_compressed.reshape(values.shape)
-        compressed_cache.append((k_compressed, v_compressed))
-    return compressed_cache
+        k_reconstructed = k_recon_flat.reshape(keys.shape)
+        v_reconstructed = v_recon_flat.reshape(values.shape)
+        
+        reconstructed_cache_tuples.append((k_reconstructed, v_reconstructed))
+        
+    # Create a new DynamicCache object from the reconstructed tuples
+    # Note: This assumes DynamicCache can be instantiated this way.
+    # If Qwen2 uses a different Cache class, this might need adjustment.
+    new_cache = DynamicCache.from_legacy_cache(past_key_values=tuple(reconstructed_cache_tuples))
+    return new_cache
 
 def evaluate_with_compressed_cache(model, tokenizer, autoencoder, texts, max_length=1024):
     """Evaluate model using compressed KV cache."""
@@ -301,9 +326,13 @@ def run_benchmark(
             use_cache=True
         )
     
+    # Explicitly cast model to the desired dtype after loading
+    model = model.to(dtype=dtype)
+    
     # Load trained autoencoder
-    autoencoder = Autoencoder(input_dim=head_dim, latent_dim=latent_dim).to(device)
+    autoencoder = Autoencoder(input_dim=head_dim, latent_dim=latent_dim, dtype=dtype).to(device)
     autoencoder.load_state_dict(torch.load(autoencoder_path))
+    autoencoder = autoencoder.to(dtype=dtype) # Also ensure AE is cast
     
     # Load WikiText evaluation texts
     dataset = load_dataset("wikitext", "wikitext-103-raw-v1")

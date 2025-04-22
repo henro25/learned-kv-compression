@@ -390,8 +390,21 @@ def main(cfg):
     
     # Save the configuration used for training alongside the model
     config_path = os.path.join(cfg["output_dir"], "autoencoder_config.json")
+    
+    # Create a serializable copy of the config
+    config_to_save = cfg.copy()
+    # Convert torch.dtype back to string for JSON serialization
+    if isinstance(config_to_save.get("dtype"), torch.dtype):
+        dtype_mapping = {
+            torch.bfloat16: "bf16",
+            torch.float16: "fp16",
+            torch.float32: "fp32",  # Use fp32 for clarity
+            # Add other dtypes if necessary
+        }
+        config_to_save["dtype"] = dtype_mapping.get(config_to_save["dtype"], str(config_to_save["dtype"])) # Fallback to str()
+
     with open(config_path, 'w') as f:
-        json.dump(cfg, f, indent=2)
+        json.dump(config_to_save, f, indent=2)
     
     writer.close()
     
