@@ -39,28 +39,32 @@ def calculate_perplexity(model, tokenizer, texts, max_length=1024):
     return perplexity
 
 def compress_kv_cache(past_key_values, autoencoders, quantization_bits=None):
-    if past_key_values is None:
-        return None
     reconstructed = []
     for i, (keys, values) in enumerate(past_key_values):
         ae = autoencoders[i]
         B, H, S, D = keys.shape
-        k_flat = keys.reshape(-1, D)
-        v_flat = values.reshape(-1, D)
-        # Encode to latent space using the autoencoder encoder
+        # Flatten for encoding
+        k_flat = keys.view(-1, D)
+        v_flat = values.view(-1, D)
+        # Encode to latent space
         k_latent = ae.encoder(k_flat)
         v_latent = ae.encoder(v_flat)
-        # Quantize latent if requested (static symmetric quantization)
+        # Apply dynamic symmetric quantization to latent if requested
         if quantization_bits:
+            # Quantize each layer's latent to specified bitwidth
             scale = 2 ** (quantization_bits - 1) - 1
-            # Scale and round
-            k_latent = torch.round(torch.clamp(k_latent * scale, -scale, scale)) / scale
-            v_latent = torch.round(torch.clamp(v_latent * scale, -scale, scale)) / scale
-        # Decode from latent using autoencoder decoder
+            max_k = k_latent.abs().max() if k_latent.numel() > 0 else 0
+            max_v = v_latent.abs().max() if v_latent.numel() > 0 else 0
+            if max_k != 0:
+                k_latent = torch.round(torch.clamp(k_latent / max_k * scale, -scale, scale)) / scale * max_k
+            if max_v != 0:
+                v_latent = torch.round(torch.clamp(v_latent / max_v * scale, -scale, scale)) / scale * max_v
+        # Decode from latent
         k_rec_flat = ae.decoder(k_latent)
         v_rec_flat = ae.decoder(v_latent)
-        k_rec = k_rec_flat.reshape(B, H, S, D)
-        v_rec = v_rec_flat.reshape(B, H, S, D)
+        # Reshape back
+        k_rec = k_rec_flat.view(B, H, S, D)
+        v_rec = v_rec_flat.view(B, H, S, D)
         reconstructed.append((k_rec, v_rec))
     return DynamicCache.from_legacy_cache(past_key_values=tuple(reconstructed))
 
@@ -93,7 +97,7 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, max_le
     perplexity = torch.exp(torch.tensor(total_loss / total_tokens)).item()
     return perplexity
 
-def evaluate_longbench(model, tokenizer, autoencoders, cfg):
+def evaluate_longbench(model, tokenizer, autoencoders, cfg, quantization_bits=None):
     subsets = ['narrativeqa', 'hotpotqa', '2wikimqa', 'musique', 'dureader']
     results = {"baseline": {}, "compressed": {}}
     # Number of evaluation texts for LongBench from config
@@ -106,7 +110,7 @@ def evaluate_longbench(model, tokenizer, autoencoders, cfg):
             texts = texts[:num_eval]
         # Calculate baseline and compressed perplexities on this subset
         base_ppl = calculate_perplexity(model, tokenizer, texts, cfg["max_seq_len"])
-        comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, cfg["max_seq_len"], cfg.get("quantization_bits"))
+        comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, cfg["max_seq_len"], quantization_bits)
         results["baseline"][s] = base_ppl
         results["compressed"][s] = comp_ppl
     return results
@@ -150,7 +154,7 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
     # Compute compressed PPL with quantization bits
     quant_bits = cfg.get("quantization_bits")
     comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, txts, cfg["max_seq_len"], quant_bits)
-    longbench = evaluate_longbench(model, tokenizer, autoencoders, cfg)
+    longbench = evaluate_longbench(model, tokenizer, autoencoders, cfg, quant_bits)
     results = {
         "baseline_perplexity": base_ppl,
         "compressed_perplexity": comp_ppl,
