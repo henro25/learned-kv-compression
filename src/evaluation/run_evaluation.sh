@@ -13,7 +13,7 @@ LATENT_DIM=$(python -c "import json; f=open('$CONFIG_FILE'); data=json.load(f); 
 MODEL_DIR="$OUTPUT_DIR/${MODEL_NAME}_${LATENT_DIM}"
 
 # Check if training has been completed
-if [ ! -f "$MODEL_DIR/autoencoder_final.pth" ]; then
+if [ ! -f "$MODEL_DIR/autoencoder_finals.pth" ]; then
     echo "Error: Autoencoder model not found in $MODEL_DIR"
     echo "Please run training first:"
     echo "python src/dictionary_learning/train.py --config $CONFIG_FILE"

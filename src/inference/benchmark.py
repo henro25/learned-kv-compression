@@ -86,10 +86,17 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, max_le
 def evaluate_longbench(model, tokenizer, autoencoders, cfg):
     subsets = ['narrativeqa', 'hotpotqa', '2wikimqa', 'musique', 'dureader']
     results = {"baseline": {}, "compressed": {}}
+    # Number of evaluation texts for LongBench from config
+    num_eval = cfg.get("num_eval_texts")
     for s in subsets:
-        ds = load_dataset("THUDM/LongBench", s)["test"]["input"]
-        base_ppl = calculate_perplexity(model, tokenizer, ds, cfg["max_seq_len"])
-        comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, ds, cfg["max_seq_len"])
+        all_inputs = load_dataset("THUDM/LongBench", s)["test"]["input"]
+        # Filter out empty strings and limit to num_eval texts
+        texts = [t for t in all_inputs if t.strip()]
+        if num_eval is not None:
+            texts = texts[:num_eval]
+        # Calculate baseline and compressed perplexities on this subset
+        base_ppl = calculate_perplexity(model, tokenizer, texts, cfg["max_seq_len"])
+        comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, cfg["max_seq_len"])
         results["baseline"][s] = base_ppl
         results["compressed"][s] = comp_ppl
     return results
@@ -124,7 +131,10 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
         ae.load_state_dict(chk[f"layer_{i}"])
         autoencoders.append(ae)
     ds = load_dataset("wikitext", "wikitext-103-raw-v1")
-    txts = [t for t in ds["test"]["text"] if t.strip()][:cfg["num_eval_texts"]]
+    # Limit WikiText evaluation to num_eval_texts from config
+    num_eval = cfg.get("num_eval_texts")
+    all_texts = [t for t in ds["test"]["text"] if t.strip()]
+    txts = all_texts[:num_eval] if num_eval is not None else all_texts
     base_ppl = calculate_perplexity(model, tokenizer, txts, cfg["max_seq_len"])
     comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, txts, cfg["max_seq_len"])
     longbench = evaluate_longbench(model, tokenizer, autoencoders, cfg)
@@ -134,6 +144,20 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
         "longbench_results": longbench,
         "config": cfg
     }
+    # Save results to JSON file in the output directory
+    os.makedirs(output_dir, exist_ok=True)
+    result_file = os.path.join(output_dir, "benchmark_results.json")
+    with open(result_file, "w") as f:
+        json.dump(results, f, indent=2)
+    # Print out where results are saved and a summary
+    print(f"Saved benchmark results to {result_file}")
+    print(f"Baseline perplexity: {base_ppl:.2f}")
+    print(f"Compressed perplexity: {comp_ppl:.2f}")
+    print("LongBench results:")
+    for subset in longbench["baseline"]:
+        bp = longbench["baseline"][subset]
+        cp = longbench["compressed"][subset]
+        print(f"  {subset}: baseline={bp:.2f}, compressed={cp:.2f}")
     return results
 
 if __name__ == "__main__":

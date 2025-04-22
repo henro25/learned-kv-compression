@@ -237,7 +237,7 @@ def main(cfg):
     )
     
     # Check if autoencoder model exists
-    autoencoder_path = os.path.join(cfg["output_dir"] + "/" + cfg["name"] + "_" + str(cfg["latent_dim"]), "autoencoder_final.pth")
+    autoencoder_path = os.path.join(cfg["output_dir"] + "/" + cfg["name"] + "_" + str(cfg["latent_dim"]), "autoencoder_finals.pth")
     if not os.path.exists(autoencoder_path):
         print(f"Error: Autoencoder model not found at {autoencoder_path}")
         print("Please run the training script first to train the autoencoder:")
