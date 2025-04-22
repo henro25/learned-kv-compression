@@ -132,16 +132,17 @@ def evaluate_with_kv_quantization(model, tokenizer, texts, max_length=1024, quan
                     past_key_values=past,
                     use_cache=True
                 )
-                # Quantize each layer's key/value
-                if quantization_bits:
-                    new_past = []
-                    for k, v in out.past_key_values:
+                # Quantize (or pass through) each layer's key/value and wrap into a DynamicCache
+                new_past = []
+                for k, v in out.past_key_values:
+                    if quantization_bits:
                         k_q = quantize_tensor(k, quantization_bits)
                         v_q = quantize_tensor(v, quantization_bits)
-                        new_past.append((k_q, v_q))
-                    past = tuple(new_past)
-                else:
-                    past = out.past_key_values
+                    else:
+                        k_q, v_q = k, v
+                    new_past.append((k_q, v_q))
+                # Create a Cache object so model.forward accepts it
+                past = DynamicCache.from_legacy_cache(past_key_values=tuple(new_past))
                 logits = out.logits[..., -1, :]
                 loss = F.cross_entropy(logits, input_ids[:, t+1], reduction='none')
                 total_loss += loss.item()
