@@ -111,6 +111,12 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
         output_attentions=True,
         use_cache=True
     )
+    # Check if the autoencoder file exists before attempting to load
+    if not os.path.exists(autoencoder_path):
+        raise FileNotFoundError(
+            f"Autoencoder file not found at the specified path: {autoencoder_path}. "
+            "Ensure the training step for this configuration completed successfully and saved the model."
+        )
     chk = torch.load(autoencoder_path)
     autoencoders = []
     for i in range(cfg["num_hidden_layers"]):
