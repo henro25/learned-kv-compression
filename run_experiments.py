@@ -164,7 +164,8 @@ def main():
     if "max_seq_len" in experiment_cfg:
         print(f"Max sequence length: {experiment_cfg['max_seq_len']}")
     
-    # Create output directory
+    # Convert output_dir to absolute path and create it
+    output_dir = os.path.abspath(output_dir)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
     
@@ -234,6 +235,7 @@ def main():
                         for quant_bits in quant_bits_list:
                             for batch_size in batch_sizes:
                                 for num_runs in num_runs_list:
+                                    # Run benchmark for the specified cache sizes
                                     result_dir = run_benchmark(
                                         model_name=model_name,
                                         autoencoder_path=model_path,
@@ -246,6 +248,9 @@ def main():
                                         learning_rate=learning_rate,
                                         quantization_bits=quant_bits
                                     )
+                                    # Store absolute path for result_dir
+                                    result_dir = os.path.abspath(result_dir)
+                                    # Append experiment result with cache sizes
                                     all_results.append({
                                         "model": model_name,
                                         "latent_dim": latent_dim,
@@ -255,6 +260,7 @@ def main():
                                         "quantization_bits": quant_bits,
                                         "batch_size": batch_size,
                                         "num_runs": num_runs,
+                                        "cache_sizes": cache_sizes,
                                         "result_dir": result_dir
                                     })
     
@@ -300,9 +306,11 @@ def main():
     print(f"{'='*80}")
     print("Experiment Results:")
     for result in all_results:
-        print(f"- Model: {result['model']}, Latent dim: {result['latent_dim']}, " +
-              f"LR: {result['learning_rate']}, Epochs: {result['num_epochs']}, Texts: {result['num_train_texts']}, " +
-              f"Quantization bits: {result['quantization_bits']}, Batch: {result['batch_size']}, Runs: {result['num_runs']}")
+        print(
+            f"- Model: {result['model']}, Latent dim: {result['latent_dim']}, Cache sizes: {result['cache_sizes']} MB, "
+            f"LR: {result['learning_rate']}, Epochs: {result['num_epochs']}, Texts: {result['num_train_texts']}, "
+            f"Quantization bits: {result['quantization_bits']}, Batch: {result['batch_size']}, Runs: {result['num_runs']}"
+        )
         print(f"  Result dir: {result['result_dir']}")
     
     print(f"{'='*80}")

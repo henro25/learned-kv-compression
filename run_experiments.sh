@@ -56,24 +56,25 @@ echo "Looking for summary file at: $RESULT_DIR/experiment_summary.json"
 if [ -f "$RESULT_DIR/experiment_summary.json" ]; then
     echo "Using experiment summary to find result directories"
     if command -v jq &> /dev/null; then
-        RESULT_DIRS=$(jq -r '.results[].result_dir' "$RESULT_DIR/experiment_summary.json" | tr '\n' ' ')
+        # Read result directories into an array to handle spaces in paths
+        mapfile -t RESULT_DIRS_ARRAY < <(jq -r '.results[].result_dir' "$RESULT_DIR/experiment_summary.json")
     else
         echo "jq not found, comparison report may be incomplete"
-        RESULT_DIRS=""
+        RESULT_DIRS_ARRAY=()
     fi
 else
     echo "Experiment summary not found at $RESULT_DIR/experiment_summary.json, comparison report may be incomplete"
     echo "Directory contents:" 
     ls -l "$RESULT_DIR" | cat
-    RESULT_DIRS=""
+    RESULT_DIRS_ARRAY=()
 fi
 
 # Show extracted result directories (benchmarks)
-echo "Found result directories: $RESULT_DIRS"
+echo "Found result directories: ${RESULT_DIRS_ARRAY[*]}"
 
-if [ -n "$RESULT_DIRS" ]; then
-    python -m src.analysis.compare_results \
-        --results $RESULT_DIRS \
+if [ "${#RESULT_DIRS_ARRAY[@]}" -gt 0 ]; then
+    python3 -m src.analysis.compare_results \
+        --results "${RESULT_DIRS_ARRAY[@]}" \
         --output "$RESULT_DIR/comparison"
     echo "Comparison analysis complete!"
 else
