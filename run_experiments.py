@@ -97,10 +97,19 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
             cmd += ["--quantization_bits", str(quantization_bits)]
         cmd += ["--output", out_file]
         print(f"Running time benchmark for cache size {size} MB: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: Benchmark failed for cache size {size} MB: {e}")
+            # Skip this size if it fails
+            continue
         # Load the single-size results
-        with open(out_file) as f:
-            single = json.load(f)
+        try:
+            with open(out_file) as f:
+                single = json.load(f)
+        except Exception as e:
+            print(f"Warning: Failed to load results for cache size {size} MB: {e}")
+            continue
         # Build the record
         key = str(size)
         b = single["benchmarks"]["baseline"]

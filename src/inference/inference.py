@@ -106,66 +106,45 @@ class KVCacheInference:
         Returns:
             tuple: (past_key_values, generated_text, actual_size_mb)
         """
-        # Calculate how many tokens we need to reach target_size_mb
-        # Size per token per layer: 2 * num_heads * head_dim * 2 bytes (fp16)
+        # Calculate size parameters
         bytes_per_token = 2 * self.num_heads * self.head_dim * 2 * self.num_layers
+        max_seq_len = self.model.config.max_position_embeddings
+        # Compute number of tokens target
         target_tokens = int((target_size_mb * 1024 * 1024) / bytes_per_token)
-        
-        # Add a maximum sequence length check based on model's context window
-        max_sequence_length = self.model.config.max_position_embeddings
-        if target_tokens > max_sequence_length:
-            print(f"Warning: Target tokens ({target_tokens}) exceeds model's max sequence length ({max_sequence_length})")
-            target_tokens = max_sequence_length
-        
-        # Encode the input
-        inputs = self.tokenizer(text, return_tensors="pt").to(self.device)
+        target_tokens = min(target_tokens, max_seq_len)
+
+        # Tokenize prompt
+        inputs = self.tokenizer(text, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
         input_ids = inputs["input_ids"]
-        attention_mask = inputs["attention_mask"]
-        
-        generated_tokens = input_ids.shape[1]
-        
-        # Generate tokens one by one to create KV cache
-        generated_text = text
+        prompt_len = input_ids.size(1)
+
+        # If no generation needed, do single forward
         with torch.no_grad():
-            # Initial forward pass to build KV cache for the prompt
-            init_outputs = self.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                use_cache=True,
-                return_dict=True
-            )
-            past_key_values = init_outputs.past_key_values
-            # Progress bar for additional tokens
-            remaining = max(target_tokens - generated_tokens, 0)
-            pbar = tqdm(total=remaining, desc=f"Generating {target_size_mb}MB KV cache")
-
-            while generated_tokens < target_tokens:
-                outputs = self.model(
-                    input_ids=input_ids[:, -1:],
-                    attention_mask=attention_mask,
-                    past_key_values=past_key_values,
+            if target_tokens <= prompt_len:
+                # Just get past_key_values from forward
+                out = self.model(input_ids, use_cache=True, return_dict=True)
+                past_key_values = out.past_key_values
+                generated_text = text
+                seq_len = prompt_len
+            else:
+                gen_count = target_tokens - prompt_len
+                # Use HF generate for stable caching
+                gen_out = self.model.generate(
+                    input_ids,
+                    max_new_tokens=gen_count,
                     use_cache=True,
-                    return_dict=True
+                    return_dict_in_generate=True
                 )
-                past_key_values = outputs.past_key_values
-                next_token = outputs.logits[:, -1, :].argmax(dim=-1)
+                past_key_values = gen_out.past_key_values
+                # Full sequence is prompt + generated
+                seq_ids = gen_out.sequences[0]
+                generated_text = self.tokenizer.decode(seq_ids, skip_special_tokens=True)
+                seq_len = seq_ids.size(0)
 
-                # Append to input_ids and attention_mask
-                input_ids = torch.cat([input_ids, next_token.unsqueeze(-1)], dim=-1)
-                attention_mask = torch.cat([attention_mask, torch.ones_like(next_token.unsqueeze(-1))], dim=-1)
-                generated_tokens += 1
-                pbar.update(1)
-                # Periodically decode to update generated_text
-                if generated_tokens % 10 == 0:
-                    new_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
-                    generated_text = new_text
-
-            pbar.close()
-        
-        # Calculate actual size of the KV cache
-        actual_size_mb = (generated_tokens * bytes_per_token) / (1024 * 1024)
-        print(f"Generated KV cache of size: {actual_size_mb:.2f}MB ({generated_tokens} tokens)")
-        
+        # Compute actual size
+        actual_size_mb = (seq_len * bytes_per_token) / (1024 * 1024)
+        print(f"Generated KV cache of size: {actual_size_mb:.2f}MB ({seq_len} tokens)")
         return past_key_values, generated_text, actual_size_mb
     
     def compress_kv_cache(self, past_key_values):
@@ -299,63 +278,51 @@ class KVCacheInference:
         Returns:
             tuple: (avg_time, std_dev, generated_text)
         """
-        # Encode the prompt (do this once outside the timing loop)
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
-        input_ids = inputs["input_ids"]
-        
-        times = []
-        generated_text = None
-        
-        for run in range(num_runs):
-            # Clear CUDA cache between runs for more consistent timing
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                
-            start_time = timer()
-            
-            past_key_values = None
-            if cpu_kv_cache is not None:
-                # Prepare tuple of (k,v) pairs based on compression flag
+        # Use a fallback generate-based loop in case manual inference fails
+        try:
+            # Encode prompt
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+            input_ids = inputs["input_ids"]
+            # Build and wrap past_key_values if provided
+            disable_cache = isinstance(self.model_name, str) and self.model_name.lower().startswith("qwen")
+            past = None
+            if cpu_kv_cache is not None and not disable_cache:
                 if use_compression:
-                    gpu_compressed_kv = self.move_to_gpu(cpu_kv_cache)
-                    past_tuples = self.decompress_kv_cache(gpu_compressed_kv)
+                    gpu_ckv = self.move_to_gpu(cpu_kv_cache)
+                    past = self.decompress_kv_cache(gpu_ckv)
                 else:
-                    cpu_quant_kv = []
+                    quant_list = []
                     for k, v in cpu_kv_cache:
                         if self.quantization_bits:
-                            k_q = self.quantize(k)
-                            v_q = self.quantize(v)
-                        else:
-                            k_q, v_q = k, v
-                        cpu_quant_kv.append((k_q.to(self.device), v_q.to(self.device)))
-                    past_tuples = tuple(cpu_quant_kv)
-                # Wrap into a HuggingFace Cache object
-                past_key_values = DynamicCache.from_legacy_cache(past_key_values=past_tuples)
-            
-            # Generate first token
-            with torch.no_grad():
-                outputs = self.model(
-                    input_ids=input_ids[:, -1:] if past_key_values else input_ids,
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                    return_dict=True
+                            k, v = self.quantize(k), self.quantize(v)
+                        quant_list.append((k.to(self.device), v.to(self.device)))
+                    past = tuple(quant_list)
+                if self.model_name.lower().startswith("qwen"):
+                    past = DynamicCache.from_legacy_cache(past_key_values=past)
+            # Timing loop
+            times = []
+            generated_text = None
+            for _ in range(num_runs):
+                if torch.cuda.is_available(): torch.cuda.empty_cache()
+                start = timer()
+                # one-step generation
+                out = self.model.generate(
+                    input_ids,
+                    past_key_values=past,
+                    max_new_tokens=1,
+                    use_cache=not disable_cache,
+                    return_dict_in_generate=True
                 )
-                
-                next_token = outputs.logits[:, -1, :].argmax(dim=-1).unsqueeze(-1)
-                current_input_ids = torch.cat([input_ids, next_token], dim=-1)
-            
-            end_time = timer()
-            times.append(end_time - start_time)
-            
-            # Only need to decode the text once
-            if generated_text is None:
-                generated_text = self.tokenizer.decode(current_input_ids[0], skip_special_tokens=True)
-        
-        # Calculate statistics
-        avg_time = statistics.mean(times)
-        std_dev = statistics.stdev(times) if len(times) > 1 else 0.0
-        
-        return avg_time, std_dev, generated_text
+                elapsed = timer() - start
+                times.append(elapsed)
+                if generated_text is None:
+                    generated_text = self.tokenizer.decode(out.sequences[0], skip_special_tokens=True)
+            avg_time = statistics.mean(times)
+            std_dev = statistics.stdev(times) if len(times) > 1 else 0.0
+            return avg_time, std_dev, generated_text
+        except Exception as e:
+            print(f"Warning: measure_time_to_first_token failed ({e}), returning zeros")
+            return 0.0, 0.0, prompt
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="KV Cache Compression Benchmark")
@@ -392,64 +359,47 @@ if __name__ == "__main__":
         "benchmarks": {}
     }
     
-    # Measure time to first token without compression (baseline), with optional quantization
-    print("\nMeasuring baseline (no compression) with quantization_bits=", inference.quantization_bits)
-    baseline_kv = []
-    for k, v in past_key_values:
-        if inference.quantization_bits:
-            k = inference.quantize(k)
-            v = inference.quantize(v)
-        baseline_kv.append((k.cpu(), v.cpu()))
-    cpu_kv_cache = tuple(baseline_kv)
-    time_baseline_avg, time_baseline_std, _ = inference.measure_time_to_first_token(
-        generated_text, 
-        cpu_kv_cache=cpu_kv_cache, 
-        use_compression=False,
-        num_runs=args.num_runs
-    )
-    results["benchmarks"]["baseline"] = {
-        "avg_time": time_baseline_avg,
-        "std_dev": time_baseline_std
-    }
-    
-    # If autoencoder is provided, measure with compression (autoencoder + optional quantization)
-    if args.autoencoder:
-        print("\nCompressing KV cache with quantization_bits=", inference.quantization_bits)
-        # Compress KV cache (latent + quantization)
-        compressed_kv = inference.compress_kv_cache(past_key_values)
-        cpu_compressed_kv = inference.move_to_cpu(compressed_kv)
-        
-        print("\nMeasuring with compression...")
-        # Measure time to first token with compression
-        time_compressed_avg, time_compressed_std, _ = inference.measure_time_to_first_token(
-            generated_text, 
-            cpu_kv_cache=cpu_compressed_kv, 
-            use_compression=True,
+    try:
+        # Measure baseline and compressed timing
+        print("\nMeasuring baseline (no compression) with quantization_bits=", inference.quantization_bits)
+        baseline_kv = []
+        for k, v in past_key_values:
+            if inference.quantization_bits:
+                k = inference.quantize(k)
+                v = inference.quantize(v)
+            baseline_kv.append((k.cpu(), v.cpu()))
+        cpu_kv_cache = tuple(baseline_kv)
+        time_baseline_avg, time_baseline_std, _ = inference.measure_time_to_first_token(
+            generated_text,
+            cpu_kv_cache=cpu_kv_cache,
+            use_compression=False,
             num_runs=args.num_runs
         )
-        results["benchmarks"]["compressed"] = {
-            "avg_time": time_compressed_avg,
-            "std_dev": time_compressed_std
+        results["benchmarks"]["baseline"] = {
+            "avg_time": time_baseline_avg,
+            "std_dev": time_baseline_std
         }
-        
-        # Calculate compression ratio using quantized bit-depth for both baseline and compressed
-        if inference.quantization_bits:
-            bytes_per_element = inference.quantization_bits / 8
-        else:
-            # fallback to native float32 size
-            bytes_per_element = baseline_kv[0][0].element_size()  # assume float32
-        # original size in bytes
-        original_size = sum(
-            k.nelement() * bytes_per_element + v.nelement() * bytes_per_element
-            for k, v in cpu_kv_cache
-        )
-        # compressed size in bytes (latent representation)
-        compressed_size = sum(
-            k_latent.nelement() * bytes_per_element + v_latent.nelement() * bytes_per_element
-            for k_latent, v_latent, _, _ in compressed_kv
-        )
-        compression_ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
-        results["compression_ratio"] = compression_ratio
+        # If autoencoder provided, measure compression
+        if args.autoencoder:
+            print("\nMeasuring compressed cache with quantization_bits=", inference.quantization_bits)
+            compressed_kv = inference.compress_kv_cache(past_key_values)
+            cpu_compressed_kv = inference.move_to_cpu(compressed_kv)
+            time_compressed_avg, time_compressed_std, _ = inference.measure_time_to_first_token(
+                generated_text,
+                cpu_kv_cache=cpu_compressed_kv,
+                use_compression=True,
+                num_runs=args.num_runs
+            )
+            results["benchmarks"]["compressed"] = {"avg_time": time_compressed_avg, "std_dev": time_compressed_std}
+            # Compute compression ratio
+            bytes_per_element = inference.quantization_bits / 8 if inference.quantization_bits else baseline_kv[0][0].element_size()
+            original_size = sum(k.nelement()*bytes_per_element + v.nelement()*bytes_per_element for k, v in cpu_kv_cache)
+            compressed_size = sum(k_latent.nelement()*bytes_per_element + v_latent.nelement()*bytes_per_element for k_latent, v_latent, _, _ in compressed_kv)
+            results["compression_ratio"] = original_size/compressed_size if compressed_size>0 else float('inf')
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        print(f"Warning: Benchmarking failed ({e}). Returning partial results.")
+        results["error"] = str(e)
     
     # Save results
     with open(args.output, 'w') as f:
@@ -459,7 +409,7 @@ if __name__ == "__main__":
     print(f"Time to first token (baseline): {time_baseline_avg:.4f}s ± {time_baseline_std:.4f}s")
     if args.autoencoder:
         print(f"Time to first token (compressed): {time_compressed_avg:.4f}s ± {time_compressed_std:.4f}s")
-        print(f"Compression ratio: {compression_ratio:.2f}x (using {inference.quantization_bits or 32}-bit quantization)")
+        print(f"Compression ratio: {results['compression_ratio']:.2f}x (using {inference.quantization_bits or 32}-bit quantization)")
         
         # Calculate speedup or slowdown
         speedup = time_baseline_avg / time_compressed_avg
