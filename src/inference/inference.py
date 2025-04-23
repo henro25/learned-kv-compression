@@ -59,16 +59,33 @@ class KVCacheInference:
         self.num_heads = self.model.config.num_attention_heads
         self.head_dim = self.model.config.hidden_size // self.num_heads
         
-        # Load autoencoder if provided
+        # Load autoencoders if provided (supporting per-layer checkpoints)
         self.autoencoder = None
+        self.autoencoders = None
         if autoencoder_path:
             if not os.path.exists(autoencoder_path):
                 raise FileNotFoundError(f"Autoencoder model not found at {autoencoder_path}")
-            
-            self.autoencoder = Autoencoder(input_dim=self.head_dim, latent_dim=latent_dim).to(self.device)
-            self.autoencoder.load_state_dict(torch.load(autoencoder_path, map_location=self.device))
-            self.autoencoder.eval()
-            print(f"Loaded autoencoder from {autoencoder_path}")
+            # Load checkpoint
+            ckpt = torch.load(autoencoder_path, map_location=self.device)
+            # Detect per-layer checkpoint format (keys like 'layer_0', 'layer_1', ...)
+            if isinstance(ckpt, dict) and any(k.startswith('layer_') for k in ckpt.keys()):
+                # Instantiate one autoencoder per layer
+                self.autoencoders = []
+                for layer_idx in range(self.num_layers):
+                    layer_key = f'layer_{layer_idx}'
+                    if layer_key not in ckpt:
+                        raise KeyError(f"Missing checkpoint for layer {layer_idx}")
+                    ae = Autoencoder(input_dim=self.head_dim, latent_dim=latent_dim).to(self.device)
+                    ae.load_state_dict(ckpt[layer_key])
+                    ae.eval()
+                    self.autoencoders.append(ae)
+                print(f"Loaded {len(self.autoencoders)} layer-wise autoencoders from {autoencoder_path}")
+            else:
+                # Single autoencoder
+                self.autoencoder = Autoencoder(input_dim=self.head_dim, latent_dim=latent_dim).to(self.device)
+                self.autoencoder.load_state_dict(ckpt)
+                self.autoencoder.eval()
+                print(f"Loaded autoencoder from {autoencoder_path}")
         
         self.quantization_bits = quantization_bits
         # Set up quantization scale if bits provided
@@ -155,7 +172,7 @@ class KVCacheInference:
         Returns:
             compressed_kv: Compressed representation of the KV cache
         """
-        if not self.autoencoder:
+        if self.autoencoder is None and self.autoencoders is None:
             raise ValueError("Autoencoder is not loaded for compression")
         
         compressed_kv = []
@@ -163,11 +180,13 @@ class KVCacheInference:
             for layer_idx, (k, v) in enumerate(past_key_values):
                 # Process keys: shape (batch, num_heads, seq_len, head_dim)
                 k_flat = k.view(-1, self.head_dim)
-                k_latent = self._process_in_batches(k_flat, self.autoencoder.encoder)
+                # Select layer-specific autoencoder if available
+                ae = (self.autoencoders[layer_idx] if self.autoencoders is not None else self.autoencoder)
+                k_latent = self._process_in_batches(k_flat, ae.encoder)
                 
                 # Process values: shape (batch, num_heads, seq_len, head_dim)
                 v_flat = v.view(-1, self.head_dim)
-                v_latent = self._process_in_batches(v_flat, self.autoencoder.encoder)
+                v_latent = self._process_in_batches(v_flat, ae.encoder)
                 
                 # Store the shapes for reconstruction
                 k_shape = k.shape
@@ -204,20 +223,20 @@ class KVCacheInference:
         Returns:
             past_key_values: Decompressed past key values for the model
         """
-        if not self.autoencoder:
+        if self.autoencoder is None and self.autoencoders is None:
             raise ValueError("Autoencoder is not loaded for decompression")
         
         past_key_values = []
         with torch.no_grad():
-            for k_latent, v_latent, k_shape, v_shape in compressed_kv:
+            for layer_idx, (k_latent, v_latent, k_shape, v_shape) in enumerate(compressed_kv):
+                # Select layer-specific autoencoder if available
+                ae = (self.autoencoders[layer_idx] if self.autoencoders is not None else self.autoencoder)
                 # Decompress keys
-                k_flat = self._process_in_batches(k_latent, self.autoencoder.decoder)
+                k_flat = self._process_in_batches(k_latent, ae.decoder)
                 k = k_flat.view(k_shape)
-                
                 # Decompress values
-                v_flat = self._process_in_batches(v_latent, self.autoencoder.decoder)
+                v_flat = self._process_in_batches(v_latent, ae.decoder)
                 v = v_flat.view(v_shape)
-                
                 past_key_values.append((k, v))
         
         return tuple(past_key_values)
