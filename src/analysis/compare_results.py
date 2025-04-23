@@ -301,36 +301,75 @@ def generate_report(df, output_dir):
         
         f.write("## Key Findings\n\n")
         
-        # Find best configurations
-        if "speedup" in df.columns and df["speedup"].notna().any():
-            best_speedup = df.loc[df["speedup"].idxmax()]
-            f.write(f"- Best speedup: **{best_speedup['speedup']:.2f}x** (Latent dim={best_speedup['latent_dim']}, Cache size={best_speedup['cache_size_mb']} MB)\n")
+        # Key Findings: best speedup and compression ratio
+        import pandas as _pd
+        # Helper for safe numeric formatting
+        def fmt(val, spec):
+            try:
+                if val is None or _pd.isna(val):
+                    return "N/A"
+                return spec.format(val)
+            except Exception:
+                return "N/A"
+        # Best speedup
+        if "speedup" in df.columns:
+            speedups = df["speedup"].dropna()
+            if not speedups.empty:
+                idx = speedups.idxmax()
+                row = df.loc[idx]
+                sp = fmt(row["speedup"], "{:.2f}")
+                ld = fmt(row["latent_dim"], "{:.0f}")
+                cs = fmt(row["cache_size_mb"], "{:.1f}")
+                f.write(f"- Best speedup: **{sp}x** (Latent dim={ld}, Cache size={cs} MB)\n")
+            else:
+                f.write("- Best speedup: n/a (no valid speedup data)\n")
         else:
             f.write("- Best speedup: n/a (no valid speedup data)\n")
-        
-        if "compression_ratio" in df.columns and df["compression_ratio"].notna().any():
-            best_compression = df.loc[df["compression_ratio"].idxmax()]
-            f.write(f"- Best compression ratio: **{best_compression['compression_ratio']:.2f}x** (Latent dim={best_compression['latent_dim']}, Cache size={best_compression['cache_size_mb']} MB)\n\n")
+        # Best compression ratio
+        if "compression_ratio" in df.columns:
+            ratios = df["compression_ratio"].dropna()
+            if not ratios.empty:
+                idx = ratios.idxmax()
+                row = df.loc[idx]
+                cr = fmt(row["compression_ratio"], "{:.2f}")
+                ld = fmt(row["latent_dim"], "{:.0f}")
+                cs = fmt(row["cache_size_mb"], "{:.1f}")
+                f.write(f"- Best compression ratio: **{cr}x** (Latent dim={ld}, Cache size={cs} MB)\n\n")
+            else:
+                f.write("- Best compression ratio: n/a (no valid compression ratio data)\n\n")
         else:
             f.write("- Best compression ratio: n/a (no valid compression ratio data)\n\n")
         
-        # Add table of results for the largest cache size
-        largest_size = df["cache_size_mb"].max()
-        largest_df = df[df["cache_size_mb"] == largest_size].sort_values("latent_dim")
-        
-        f.write(f"## Results for {largest_size} MB Cache\n\n")
-        f.write("| Latent Dim | Baseline Time (s) | Baseline Std | Compressed Time (s) | Compressed Std | Speedup | Compression Ratio |\n")
-        f.write("|------------|------------------|--------------|---------------------|----------------|---------|-------------------|\n")
-        
-        for _, row in largest_df.iterrows():
-            baseline = row["baseline_time"]
-            baseline_std = row.get("baseline_std", "N/A")
-            compressed = row.get("compressed_time", "N/A")
-            compressed_std = row.get("compressed_std", "N/A") 
-            speedup = row.get("speedup", "N/A")
-            compression = row.get("compression_ratio", "N/A")
-            
-            f.write(f"| {int(row['latent_dim'])} | {baseline:.4f} | {baseline_std if isinstance(baseline_std, str) else baseline_std:.4f} | {compressed if isinstance(compressed, str) else compressed:.4f} | {compressed_std if isinstance(compressed_std, str) else compressed_std:.4f} | {speedup if isinstance(speedup, str) else speedup:.2f} | {compression if isinstance(compression, str) else compression:.2f} |\n")
+        # Add table of results for the largest cache size using pandas to_markdown
+        import pandas as pd
+        # Determine the largest valid cache size
+        if "cache_size_mb" in df:
+            sizes = df["cache_size_mb"].dropna()
+            largest_size = sizes.max() if not sizes.empty else None
+        else:
+            largest_size = None
+        # Write header and table or fallback message
+        if largest_size is None:
+            f.write("## Results\n\nNo valid cache size benchmarks available.\n\n")
+        else:
+            f.write(f"## Results for {largest_size} MB Cache\n\n")
+            # Prepare display DataFrame
+            cols = ["latent_dim", "baseline_time", "baseline_std", "compressed_time", "compressed_std", "speedup", "compression_ratio"]
+            disp = df[df["cache_size_mb"] == largest_size][cols].copy()
+            # Fill missing with placeholder
+            disp = disp.fillna("n/a")
+            # Format numeric columns
+            def fmt4(x): return f"{x:.4f}" if isinstance(x, (int, float)) else x
+            def fmt2(x): return f"{x:.2f}" if isinstance(x, (int, float)) else x
+            for c4 in ["baseline_time", "baseline_std", "compressed_time", "compressed_std"]:
+                disp[c4] = disp[c4].apply(fmt4)
+            for c2 in ["speedup", "compression_ratio"]:
+                disp[c2] = disp[c2].apply(fmt2)
+            # Ensure latent_dim is string
+            disp["latent_dim"] = disp["latent_dim"].apply(lambda x: str(int(x)) if isinstance(x, (int, float)) else x)
+            # Write markdown table
+            f.write(disp.to_markdown(index=False))
+            f.write("\n\n")
         
         f.write("\n## Conclusions\n\n")
         f.write("- The optimal latent dimension depends on the size of the KV cache and the importance of speed vs. compression.\n")
@@ -340,8 +379,12 @@ def generate_report(df, output_dir):
             # Check if any configuration is both fast and compresses well
             good_configs = df[(df["speedup"] > 1) & (df["compression_ratio"] > 3)]
             if not good_configs.empty:
-                best_overall = good_configs.loc[good_configs["speedup"].idxmax()]
-                f.write(f"- **Recommended configuration:** Latent dim={int(best_overall['latent_dim'])} provides good balance with {best_overall['compression_ratio']:.2f}x compression and {best_overall['speedup']:.2f}x speedup.\n")
+                idx = good_configs["speedup"].idxmax()
+                row = df.loc[idx]
+                ld = fmt(row["latent_dim"], "{:.0f}")
+                sp = fmt(row["speedup"], "{:.2f}")
+                cr = fmt(row["compression_ratio"], "{:.2f}")
+                f.write(f"- **Recommended configuration:** Latent dim={ld} provides good balance with {cr}x compression and {sp}x speedup.\n")
         
         f.write("\n## Visualizations\n\n")
         f.write("See the generated PNG files for detailed comparisons:\n")
