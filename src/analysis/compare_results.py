@@ -40,6 +40,11 @@ def load_results(result_dirs):
         with open(result_file, 'r') as f:
             results = json.load(f)
         
+        # Skip files that do not have the expected benchmarks section
+        if "benchmarks" not in results:
+            print(f"Warning: 'benchmarks' not found in {result_file}; skipping this directory.")
+            continue
+        
         # Extract model info (fallback to config if not directly present)
         model_name = results.get("model") or results.get("config", {}).get("model_name") or results.get("config", {}).get("name")
         latent_dim = results.get("latent_dim") or results.get("config", {}).get("latent_dim")
