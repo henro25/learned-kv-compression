@@ -274,6 +274,11 @@ def plot_tradeoff(df, output_dir):
         columns="cache_size_mb", 
         values="speedup"
     )
+    # Drop rows/columns that have no valid values
+    pivot_df = pivot_df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+    if pivot_df.empty:
+        print("Warning: No valid data for speedup heatmap; skipping heatmap.")
+        return
     
     plt.figure(figsize=(12, 8))
     sns.heatmap(pivot_df, annot=True, fmt=".2f", cmap="viridis", 
