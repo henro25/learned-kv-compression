@@ -73,45 +73,55 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
                  cache_sizes: List[float], batch_size: int, num_runs: int, 
                  output_dir: str, cfg: Dict[str, Any], learning_rate: Optional[float] = None, quantization_bits: Optional[int] = None) -> str:
     """Run benchmarks with the trained autoencoder."""
+    # Determine unique result directory for this benchmark configuration
     safe_model_name = model_name.replace("/", "_")
     lr_suffix = f"_lr{learning_rate}" if learning_rate is not None else ""
     quant_suffix = f"_quant{quantization_bits}" if quantization_bits is not None else ""
     result_dir = os.path.join(output_dir, f"benchmark_{safe_model_name}_latent{latent_dim}{lr_suffix}{quant_suffix}_batch{batch_size}_runs{num_runs}")
     os.makedirs(result_dir, exist_ok=True)
-    
-    # Update config with benchmark parameters
-    # NOTE: THIS IS A HACK TO GET IT TO WORK
-    benchmark_cfg = cfg.copy()
-    benchmark_cfg.update({
-        "model_name": model_name,
-        "name": model_name,  # Include both for compatibility
-        "latent_dim": latent_dim,
-        "batch_size": batch_size,
-        "num_runs": num_runs,
-        "cache_sizes": cache_sizes,
-        "autoencoder_path": autoencoder_path,
-        "output_dir": result_dir,  # Set result_dir as output_dir
-        "learning_rate": learning_rate,
-        "quantization_bits": quantization_bits
-    })
-
-    # Save updated config
-    config_path = os.path.join(result_dir, "benchmark_config.json")
-    with open(config_path, "w") as f:
-        json.dump(benchmark_cfg, f, indent=2)
-    
-    cmd = [
-        "python", "-m", "src.inference.benchmark",
-        "--config", config_path
-    ]
-    
-    print(f"\n{'='*80}")
-    print(f"Running benchmark with model={model_name}, latent_dim={latent_dim}, batch_size={batch_size}, num_runs={num_runs}")
-    print(f"{'='*80}")
-    print(" ".join(cmd))
-    
-    subprocess.run(cmd)
-    
+    # Create a combined benchmarking JSON by iterating over each cache size
+    combined = {"model": model_name, "latent_dim": latent_dim, "benchmarks": {}}
+    # For each cache size, invoke the time-first-token inference script
+    for size in cache_sizes:
+        out_file = os.path.join(result_dir, f"benchmark_size{size}MB.json")
+        cmd = [
+            "python", "-m", "src.inference.inference",
+            "--model", model_name,
+            "--size", str(size),
+            "--autoencoder", autoencoder_path,
+            "--latent_dim", str(latent_dim),
+            "--batch_size", str(batch_size),
+            "--num_runs", str(num_runs)
+        ]
+        if quantization_bits is not None:
+            cmd += ["--quantization_bits", str(quantization_bits)]
+        cmd += ["--output", out_file]
+        print(f"Running time benchmark for cache size {size} MB: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+        # Load the single-size results
+        with open(out_file) as f:
+            single = json.load(f)
+        # Build the record
+        key = str(size)
+        b = single["benchmarks"]["baseline"]
+        entry = {
+            "actual_size_mb": single.get("actual_size_mb"),
+            "times": {
+                "baseline": {"avg": b["avg_time"], "std_dev": b["std_dev"]}
+            }
+        }
+        if "compressed" in single["benchmarks"]:
+            c = single["benchmarks"]["compressed"]
+            entry["times"]["compressed"] = {"avg": c["avg_time"], "std_dev": c["std_dev"]}
+            entry["speedup"] = (b["avg_time"] / c["avg_time"] if c["avg_time"] else None)
+        if "compression_ratio" in single:
+            entry["compression_ratio"] = single["compression_ratio"]
+        combined["benchmarks"][key] = entry
+    # Write out the combined results
+    result_file = os.path.join(result_dir, "benchmark_results.json")
+    with open(result_file, "w") as f:
+        json.dump(combined, f, indent=2)
+    print(f"Saved combined benchmark results to {result_file}")
     return result_dir
 
 def ensure_list(value):
@@ -154,7 +164,8 @@ def main():
     if "max_seq_len" in experiment_cfg:
         print(f"Max sequence length: {experiment_cfg['max_seq_len']}")
     
-    # Create output directory
+    # Convert output_dir to absolute path and create it
+    output_dir = os.path.abspath(output_dir)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
     
@@ -224,6 +235,7 @@ def main():
                         for quant_bits in quant_bits_list:
                             for batch_size in batch_sizes:
                                 for num_runs in num_runs_list:
+                                    # Run benchmark for the specified cache sizes
                                     result_dir = run_benchmark(
                                         model_name=model_name,
                                         autoencoder_path=model_path,
@@ -236,6 +248,9 @@ def main():
                                         learning_rate=learning_rate,
                                         quantization_bits=quant_bits
                                     )
+                                    # Store absolute path for result_dir
+                                    result_dir = os.path.abspath(result_dir)
+                                    # Append experiment result with cache sizes
                                     all_results.append({
                                         "model": model_name,
                                         "latent_dim": latent_dim,
@@ -245,6 +260,7 @@ def main():
                                         "quantization_bits": quant_bits,
                                         "batch_size": batch_size,
                                         "num_runs": num_runs,
+                                        "cache_sizes": cache_sizes,
                                         "result_dir": result_dir
                                     })
     
@@ -290,9 +306,11 @@ def main():
     print(f"{'='*80}")
     print("Experiment Results:")
     for result in all_results:
-        print(f"- Model: {result['model']}, Latent dim: {result['latent_dim']}, " +
-              f"LR: {result['learning_rate']}, Epochs: {result['num_epochs']}, Texts: {result['num_train_texts']}, " +
-              f"Quantization bits: {result['quantization_bits']}, Batch: {result['batch_size']}, Runs: {result['num_runs']}")
+        print(
+            f"- Model: {result['model']}, Latent dim: {result['latent_dim']}, Cache sizes: {result['cache_sizes']} MB, "
+            f"LR: {result['learning_rate']}, Epochs: {result['num_epochs']}, Texts: {result['num_train_texts']}, "
+            f"Quantization bits: {result['quantization_bits']}, Batch: {result['batch_size']}, Runs: {result['num_runs']}"
+        )
         print(f"  Result dir: {result['result_dir']}")
     
     print(f"{'='*80}")

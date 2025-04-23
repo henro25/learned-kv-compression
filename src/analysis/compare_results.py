@@ -30,74 +30,71 @@ def load_results(result_dirs):
     all_data = []
     
     for result_dir in result_dirs:
-        dir_path = Path(result_dir)
-        result_file = dir_path / "benchmark_results.json"
-        
+        result_file = Path(result_dir) / "benchmark_results.json"
         if not result_file.exists():
             print(f"Warning: Results file not found in {result_dir}")
             continue
-        
+
         with open(result_file, 'r') as f:
             results = json.load(f)
-        
-        # Extract model info (fallback to config if not directly present)
+
+        # Common metadata
         model_name = results.get("model") or results.get("config", {}).get("model_name") or results.get("config", {}).get("name")
         latent_dim = results.get("latent_dim") or results.get("config", {}).get("latent_dim")
-        # Skip if essential metadata is missing
         if model_name is None or latent_dim is None:
             print(f"Warning: 'model' or 'latent_dim' missing in {result_file}; skipping this directory.")
             continue
-        
-        # Process each benchmark
-        for size_mb, data in results["benchmarks"].items():
-            record = {
-                "model": model_name,
-                "latent_dim": latent_dim,
-                "cache_size_mb": float(size_mb),
-                "actual_size_mb": data["actual_size_mb"]
-            }
-            
-            # Handle new results format with avg and std_dev
-            if isinstance(data["times"]["baseline"], dict):
-                record["baseline_time"] = data["times"]["baseline"]["avg"]
-                record["baseline_std"] = data["times"]["baseline"]["std_dev"]
-            else:
-                # Handle older format for backward compatibility
-                record["baseline_time"] = data["times"]["baseline"]
-                record["baseline_std"] = 0.0
-            
-            # Add compressed data if available
-            if "compressed" in data["times"]:
-                if isinstance(data["times"]["compressed"], dict):
-                    record["compressed_time"] = data["times"]["compressed"]["avg"]
-                    record["compressed_std"] = data["times"]["compressed"]["std_dev"]
+
+        # Old-style time benchmarks
+        benchmarks = results.get("benchmarks")
+        if isinstance(benchmarks, dict):
+            for size_mb, data in benchmarks.items():
+                record = {"model": model_name, "latent_dim": latent_dim, "cache_size_mb": float(size_mb), "actual_size_mb": data.get("actual_size_mb")}
+                # baseline
+                b = data["times"]["baseline"]
+                if isinstance(b, dict):
+                    record["baseline_time"] = b["avg"]; record["baseline_std"] = b["std_dev"]
                 else:
-                    # Handle older format for backward compatibility
-                    record["compressed_time"] = data["times"]["compressed"]
-                    record["compressed_std"] = 0.0
-                
-                # Calculate speedup if not already provided
-                if "speedup" in data:
-                    record["speedup"] = data["speedup"]
-                else:
-                    record["speedup"] = record["baseline_time"] / record["compressed_time"]
-            
-            if "compression_ratio" in data:
-                record["compression_ratio"] = data["compression_ratio"]
-            
-            all_data.append(record)
-    
-    # Convert to DataFrame and sort
+                    record["baseline_time"] = b; record["baseline_std"] = 0.0
+                # compressed
+                if "compressed" in data["times"]:
+                    c = data["times"]["compressed"]
+                    if isinstance(c, dict):
+                        record["compressed_time"] = c["avg"]; record["compressed_std"] = c["std_dev"]
+                    else:
+                        record["compressed_time"] = c; record["compressed_std"] = 0.0
+                    record["speedup"] = data.get("speedup", record["baseline_time"] / record["compressed_time"] if record["compressed_time"] else None)
+                if "compression_ratio" in data:
+                    record["compression_ratio"] = data["compression_ratio"]
+                all_data.append(record)
+            continue
+
+        # New-style perplexity benchmarks
+        if "baseline_perplexity" in results and "compressed_perplexity" in results:
+            rec = {"model": model_name, "latent_dim": latent_dim, "cache_size_mb": None, "actual_size_mb": None,
+                   "baseline_time": results["baseline_perplexity"], "baseline_std": 0.0,
+                   "compressed_time": results["compressed_perplexity"], "compressed_std": 0.0,
+                   "speedup": (results["baseline_perplexity"] / results["compressed_perplexity"] if results["compressed_perplexity"] else None)}
+            if "compression_ratio" in results:
+                rec["compression_ratio"] = results["compression_ratio"]
+            all_data.append(rec)
+            continue
+
+        print(f"Warning: Unrecognized result format in {result_file}; skipping this directory.")
+
     if not all_data:
         raise ValueError("No valid results found in the provided directories")
-    
     df = pd.DataFrame(all_data)
     df = df.sort_values(["latent_dim", "cache_size_mb"])
-    
     return df
 
 def plot_time_comparison(df, output_dir):
     """Plot time to first token comparison across different latent dimensions"""
+    # Skip if no cache sizes to plot (e.g., perplexity-only results)
+    if df["cache_size_mb"].dropna().empty:
+        print("Warning: No valid cache_size_mb values; skipping time comparison plot.")
+        return
+    
     plt.figure(figsize=(12, 8))
     
     # Plot baseline as reference
@@ -114,8 +111,13 @@ def plot_time_comparison(df, output_dir):
                      yerr=subset["compressed_std"],
                      fmt='o-', linewidth=2, label=f'Latent Dim = {latent_dim}', capsize=4)
     
-    plt.xscale('log')
-    plt.yscale('log')
+    # Apply log scales if possible
+    try:
+        plt.xscale('log')
+        plt.yscale('log')
+    except ValueError:
+        print("Warning: Data has non-positive values; skipping log scaling on time comparison.")
+    
     plt.xlabel('KV Cache Size (MB)', fontsize=14)
     plt.ylabel('Time to First Token (s)', fontsize=14)
     plt.title('KV Cache Loading Time Comparison', fontsize=16)
@@ -201,8 +203,9 @@ def plot_compression_ratio(df, output_dir):
 
 def plot_speedup(df, output_dir):
     """Plot speedup across different latent dimensions"""
-    if "speedup" not in df.columns:
-        print("Warning: Speedup data not available")
+    # Skip if no cache sizes to plot (e.g., perplexity-only results)
+    if df["cache_size_mb"].dropna().empty:
+        print("Warning: No valid cache_size_mb values; skipping speedup plot.")
         return
     
     plt.figure(figsize=(12, 8))
