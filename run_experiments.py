@@ -215,7 +215,7 @@ def main():
                         else:
                             # Use existing model if skipping training
                             model_dir = os.path.join(model_output_dir, f"{safe_model_name}_latent{latent_dim}_lr{learning_rate}")
-                            model_path = os.path.join(model_dir, "autoencoder_final.pth")
+                            model_path = os.path.join(model_dir, "autoencoders_final.pth")
                             if not os.path.exists(model_path):
                                 print(f"Warning: Model {model_path} not found. Skipping this configuration.")
                                 continue

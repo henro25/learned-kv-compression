@@ -22,7 +22,8 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
 from datasets import load_dataset
-from transformers import AutoTokenizer, AutoModelForCausalLM, AdamW, get_cosine_schedule_with_warmup
+from transformers import AutoTokenizer, AutoModelForCausalLM, get_cosine_schedule_with_warmup
+from torch.optim import AdamW
 from src.models.autoencoder import Autoencoder
 from src.utils.buffer import Buffer
 
@@ -228,8 +229,11 @@ def main(cfg):
             avg_eval = np.mean(eval_losses)
             writer.add_scalar('Loss/eval', avg_eval, epoch+1)
 
+    # Save final checkpoint (one dict with per-layer state) and log its path
     final_ckpt = {f"layer_{i}": ae.state_dict() for i, ae in enumerate(autoencoders)}
-    torch.save(final_ckpt, os.path.join(cfg["output_dir"], "autoencoders_final.pth"))
+    final_path = os.path.join(cfg["output_dir"], "autoencoders_final.pth")
+    torch.save(final_ckpt, final_path)
+    print(f"Saved final autoencoder checkpoint to: {final_path}")
     writer.close()
     print("Training complete!")
 
