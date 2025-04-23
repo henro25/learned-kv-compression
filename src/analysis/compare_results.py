@@ -111,8 +111,13 @@ def plot_time_comparison(df, output_dir):
                      yerr=subset["compressed_std"],
                      fmt='o-', linewidth=2, label=f'Latent Dim = {latent_dim}', capsize=4)
     
-    plt.xscale('log')
-    plt.yscale('log')
+    # Apply log scales if possible
+    try:
+        plt.xscale('log')
+        plt.yscale('log')
+    except ValueError:
+        print("Warning: Data has non-positive values; skipping log scaling on time comparison.")
+    
     plt.xlabel('KV Cache Size (MB)', fontsize=14)
     plt.ylabel('Time to First Token (s)', fontsize=14)
     plt.title('KV Cache Loading Time Comparison', fontsize=16)

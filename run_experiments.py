@@ -73,46 +73,51 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
                  cache_sizes: List[float], batch_size: int, num_runs: int, 
                  output_dir: str, cfg: Dict[str, Any], learning_rate: Optional[float] = None, quantization_bits: Optional[int] = None) -> str:
     """Run benchmarks with the trained autoencoder."""
-    safe_model_name = model_name.replace("/", "_")
-    lr_suffix = f"_lr{learning_rate}" if learning_rate is not None else ""
-    quant_suffix = f"_quant{quantization_bits}" if quantization_bits is not None else ""
-    result_dir = os.path.join(output_dir, f"benchmark_{safe_model_name}_latent{latent_dim}{lr_suffix}{quant_suffix}_batch{batch_size}_runs{num_runs}")
-    os.makedirs(result_dir, exist_ok=True)
-    
-    # Update config with benchmark parameters
-    # NOTE: THIS IS A HACK TO GET IT TO WORK
-    benchmark_cfg = cfg.copy()
-    benchmark_cfg.update({
-        "model_name": model_name,
-        "name": model_name,  # Include both for compatibility
-        "latent_dim": latent_dim,
-        "batch_size": batch_size,
-        "num_runs": num_runs,
-        "cache_sizes": cache_sizes,
-        "autoencoder_path": autoencoder_path,
-        "output_dir": result_dir,  # Set result_dir as output_dir
-        "learning_rate": learning_rate,
-        "quantization_bits": quantization_bits
-    })
-
-    # Save updated config
-    config_path = os.path.join(result_dir, "benchmark_config.json")
-    with open(config_path, "w") as f:
-        json.dump(benchmark_cfg, f, indent=2)
-    
-    cmd = [
-        "python", "-m", "src.inference.benchmark",
-        "--config", config_path
-    ]
-    
-    print(f"\n{'='*80}")
-    print(f"Running benchmark with model={model_name}, latent_dim={latent_dim}, batch_size={batch_size}, num_runs={num_runs}")
-    print(f"{'='*80}")
-    print(" ".join(cmd))
-    
-    subprocess.run(cmd)
-    
-    return result_dir
+    # Create a combined benchmarking JSON by iterating over each cache size
+    os.makedirs(output_dir, exist_ok=True)
+    combined = {"model": model_name, "latent_dim": latent_dim, "benchmarks": {}}
+    # For each cache size, invoke the time-first-token inference script
+    for size in cache_sizes:
+        out_file = os.path.join(output_dir, f"benchmark_size{size}MB.json")
+        cmd = [
+            "python", "-m", "src.inference.inference",
+            "--model", model_name,
+            "--size", str(size),
+            "--autoencoder", autoencoder_path,
+            "--latent_dim", str(latent_dim),
+            "--batch_size", str(batch_size),
+            "--num_runs", str(num_runs)
+        ]
+        if quantization_bits is not None:
+            cmd += ["--quantization_bits", str(quantization_bits)]
+        cmd += ["--output", out_file]
+        print(f"Running time benchmark for cache size {size} MB: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+        # Load the single-size results
+        with open(out_file) as f:
+            single = json.load(f)
+        # Build the record
+        key = str(size)
+        b = single["benchmarks"]["baseline"]
+        entry = {
+            "actual_size_mb": single.get("actual_size_mb"),
+            "times": {
+                "baseline": {"avg": b["avg_time"], "std_dev": b["std_dev"]}
+            }
+        }
+        if "compressed" in single["benchmarks"]:
+            c = single["benchmarks"]["compressed"]
+            entry["times"]["compressed"] = {"avg": c["avg_time"], "std_dev": c["std_dev"]}
+            entry["speedup"] = (b["avg_time"] / c["avg_time"] if c["avg_time"] else None)
+        if "compression_ratio" in single:
+            entry["compression_ratio"] = single["compression_ratio"]
+        combined["benchmarks"][key] = entry
+    # Write out the combined results
+    result_file = os.path.join(output_dir, "benchmark_results.json")
+    with open(result_file, "w") as f:
+        json.dump(combined, f, indent=2)
+    print(f"Saved combined benchmark results to {result_file}")
+    return output_dir
 
 def ensure_list(value):
     """Convert a single value to a list if it's not already a list."""
