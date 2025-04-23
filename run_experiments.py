@@ -73,12 +73,17 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
                  cache_sizes: List[float], batch_size: int, num_runs: int, 
                  output_dir: str, cfg: Dict[str, Any], learning_rate: Optional[float] = None, quantization_bits: Optional[int] = None) -> str:
     """Run benchmarks with the trained autoencoder."""
+    # Determine unique result directory for this benchmark configuration
+    safe_model_name = model_name.replace("/", "_")
+    lr_suffix = f"_lr{learning_rate}" if learning_rate is not None else ""
+    quant_suffix = f"_quant{quantization_bits}" if quantization_bits is not None else ""
+    result_dir = os.path.join(output_dir, f"benchmark_{safe_model_name}_latent{latent_dim}{lr_suffix}{quant_suffix}_batch{batch_size}_runs{num_runs}")
+    os.makedirs(result_dir, exist_ok=True)
     # Create a combined benchmarking JSON by iterating over each cache size
-    os.makedirs(output_dir, exist_ok=True)
     combined = {"model": model_name, "latent_dim": latent_dim, "benchmarks": {}}
     # For each cache size, invoke the time-first-token inference script
     for size in cache_sizes:
-        out_file = os.path.join(output_dir, f"benchmark_size{size}MB.json")
+        out_file = os.path.join(result_dir, f"benchmark_size{size}MB.json")
         cmd = [
             "python", "-m", "src.inference.inference",
             "--model", model_name,
@@ -113,11 +118,11 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
             entry["compression_ratio"] = single["compression_ratio"]
         combined["benchmarks"][key] = entry
     # Write out the combined results
-    result_file = os.path.join(output_dir, "benchmark_results.json")
+    result_file = os.path.join(result_dir, "benchmark_results.json")
     with open(result_file, "w") as f:
         json.dump(combined, f, indent=2)
     print(f"Saved combined benchmark results to {result_file}")
-    return output_dir
+    return result_dir
 
 def ensure_list(value):
     """Convert a single value to a list if it's not already a list."""
