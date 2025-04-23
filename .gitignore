@@ -3,3 +3,6 @@ runs/
 
 *.pth
 *.pyc
+
+huggingface_cache/
+kvpress/

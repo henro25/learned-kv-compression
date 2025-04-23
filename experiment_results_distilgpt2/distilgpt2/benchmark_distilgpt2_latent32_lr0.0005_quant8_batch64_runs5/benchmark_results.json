@@ -1,0 +1,69 @@
+{
+  "baseline_perplexity": 77.17529296875,
+  "compressed_perplexity": 2224.634521484375,
+  "longbench_results": {
+    "baseline": {
+      "narrativeqa": 414.23876953125,
+      "hotpotqa": 204.7103729248047,
+      "2wikimqa": 380.3045349121094,
+      "musique": 225.78663635253906,
+      "dureader": 86.94865417480469
+    },
+    "compressed": {
+      "narrativeqa": 3233.886474609375,
+      "hotpotqa": 1229.7484130859375,
+      "2wikimqa": 2554.594482421875,
+      "musique": 1239.926025390625,
+      "dureader": 1008.90966796875
+    }
+  },
+  "config": {
+    "models": [
+      "distilgpt2"
+    ],
+    "latent_dims": [
+      8,
+      16,
+      32
+    ],
+    "learning_rates": [
+      0.0005
+    ],
+    "num_epochs": [
+      2
+    ],
+    "num_train_texts": [
+      100
+    ],
+    "seed": 42,
+    "skip_training": false,
+    "quantization_bits": 8,
+    "output_dir": "experiment_results_distilgpt2/distilgpt2/benchmark_distilgpt2_latent32_lr0.0005_quant8_batch64_runs5",
+    "eval_interval": 1000,
+    "num_eval_texts": 10,
+    "lm_batch_size": 1,
+    "buffer_size": 256,
+    "batch_size": 64,
+    "dtype": "bf16",
+    "buffer_mult": 2,
+    "gradient_accumulation_steps": 2,
+    "device": "cuda",
+    "name": "distilgpt2",
+    "num_hidden_layers": 6,
+    "num_attention_heads": 12,
+    "max_seq_len": 1024,
+    "hidden_size": 768,
+    "vocab_size": 50257,
+    "cache_sizes": [
+      1,
+      10,
+      100,
+      1000
+    ],
+    "model_name": "distilgpt2",
+    "latent_dim": 32,
+    "num_runs": 5,
+    "autoencoder_path": "experiment_results_distilgpt2/distilgpt2/distilgpt2_latent32_lr0.0005/autoencoders_final.pth",
+    "learning_rate": 0.0005
+  }
+}
