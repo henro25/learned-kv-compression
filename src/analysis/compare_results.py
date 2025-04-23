@@ -302,13 +302,17 @@ def generate_report(df, output_dir):
         f.write("## Key Findings\n\n")
         
         # Find best configurations
-        if "speedup" in df.columns:
+        if "speedup" in df.columns and df["speedup"].notna().any():
             best_speedup = df.loc[df["speedup"].idxmax()]
             f.write(f"- Best speedup: **{best_speedup['speedup']:.2f}x** (Latent dim={best_speedup['latent_dim']}, Cache size={best_speedup['cache_size_mb']} MB)\n")
+        else:
+            f.write("- Best speedup: n/a (no valid speedup data)\n")
         
-        if "compression_ratio" in df.columns:
+        if "compression_ratio" in df.columns and df["compression_ratio"].notna().any():
             best_compression = df.loc[df["compression_ratio"].idxmax()]
             f.write(f"- Best compression ratio: **{best_compression['compression_ratio']:.2f}x** (Latent dim={best_compression['latent_dim']}, Cache size={best_compression['cache_size_mb']} MB)\n\n")
+        else:
+            f.write("- Best compression ratio: n/a (no valid compression ratio data)\n\n")
         
         # Add table of results for the largest cache size
         largest_size = df["cache_size_mb"].max()
