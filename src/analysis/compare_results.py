@@ -242,15 +242,19 @@ def plot_tradeoff(df, output_dir):
     markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*']
     
     # Plot each cache size with a different marker
-    for i, size in enumerate(sorted(df["cache_size_mb"].unique())):
+    for i, size in enumerate(sorted(df["cache_size_mb"].dropna().unique())):
         subset = df[df["cache_size_mb"] == size]
+        # Filter out rows with missing speedup or compression_ratio
+        valid = subset.dropna(subset=["compression_ratio", "speedup"])
+        if valid.empty:
+            continue
         marker = markers[i % len(markers)]
         
-        scatter = plt.scatter(subset["compression_ratio"], subset["speedup"], 
+        scatter = plt.scatter(valid["compression_ratio"], valid["speedup"], 
                  s=100, marker=marker, label=f'{size} MB')
         
-        # Add latent dimension annotations
-        for _, row in subset.iterrows():
+        # Add latent dimension annotations only for valid points
+        for _, row in valid.iterrows():
             plt.annotate(f'dim={int(row["latent_dim"])}', 
                         (row["compression_ratio"], row["speedup"]),
                         xytext=(5, 5), textcoords='offset points')
