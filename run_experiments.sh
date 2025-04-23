@@ -21,10 +21,23 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-# Print configuration
+# Print configuration and set up directories
+SCRIPT_DIR=$(pwd)
 echo "==== KV Cache Compression Experiment ===="
 echo "Config file: $CONFIG_FILE"
+echo "Working directory: $SCRIPT_DIR"
 echo "========================================"
+
+# Determine the experiment result directory from the config, make it absolute
+REL_OUTPUT_DIR=$(jq -r '.output_dir' "$CONFIG_FILE")
+if [[ "$REL_OUTPUT_DIR" == /* ]]; then
+    RESULT_DIR="$REL_OUTPUT_DIR"
+else
+    RESULT_DIR="$SCRIPT_DIR/$REL_OUTPUT_DIR"
+fi
+echo "Experiment results directory: $RESULT_DIR"
+# Create comparison output directory
+mkdir -p "$RESULT_DIR/comparison"
 
 # Load necessary modules (adjust for your cluster)
 # module load cuda/11.7
@@ -37,32 +50,31 @@ echo "Experiment completed at $(date)"
 
 # Run comparison analysis
 echo "Generating comparison report..."
-result_dir=$(jq -r '.output_dir' $CONFIG_FILE)
-mkdir -p $result_dir/comparison
+# Use the resolved RESULT_DIR
+echo "Looking for summary file at: $RESULT_DIR/experiment_summary.json"
 
-# Use the experiment_summary.json file to get result directories
-if [ -f "$result_dir/experiment_summary.json" ]; then
+if [ -f "$RESULT_DIR/experiment_summary.json" ]; then
     echo "Using experiment summary to find result directories"
-    # Extract result directories from the experiment summary using jq if available
     if command -v jq &> /dev/null; then
-        RESULT_DIRS=$(jq -r '.results[].result_dir' "$result_dir/experiment_summary.json" | tr '\n' ' ')
+        RESULT_DIRS=$(jq -r '.results[].result_dir' "$RESULT_DIR/experiment_summary.json" | tr '\n' ' ')
     else
-        # Fallback for when jq is not available
         echo "jq not found, comparison report may be incomplete"
         RESULT_DIRS=""
     fi
 else
-    echo "Experiment summary not found, comparison report may be incomplete"
+    echo "Experiment summary not found at $RESULT_DIR/experiment_summary.json, comparison report may be incomplete"
+    echo "Directory contents:" 
+    ls -l "$RESULT_DIR" | cat
     RESULT_DIRS=""
 fi
 
+# Show extracted result directories (benchmarks)
 echo "Found result directories: $RESULT_DIRS"
 
-# Run comparison if we have result directories
 if [ -n "$RESULT_DIRS" ]; then
     python -m src.analysis.compare_results \
         --results $RESULT_DIRS \
-        --output $result_dir/comparison
+        --output "$RESULT_DIR/comparison"
     echo "Comparison analysis complete!"
 else
     echo "No result directories found for comparison analysis!"
