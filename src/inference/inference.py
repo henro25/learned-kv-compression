@@ -126,33 +126,39 @@ class KVCacheInference:
         # Generate tokens one by one to create KV cache
         generated_text = text
         with torch.no_grad():
-            past_key_values = None
-            pbar = tqdm(total=target_tokens, desc=f"Generating {target_size_mb}MB KV cache")
-            
+            # Initial forward pass to build KV cache for the prompt
+            init_outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                use_cache=True,
+                return_dict=True
+            )
+            past_key_values = init_outputs.past_key_values
+            # Progress bar for additional tokens
+            remaining = max(target_tokens - generated_tokens, 0)
+            pbar = tqdm(total=remaining, desc=f"Generating {target_size_mb}MB KV cache")
+
             while generated_tokens < target_tokens:
                 outputs = self.model(
-                    input_ids=input_ids[:, -1:] if past_key_values else input_ids,
+                    input_ids=input_ids[:, -1:],
                     attention_mask=attention_mask,
                     past_key_values=past_key_values,
                     use_cache=True,
                     return_dict=True
                 )
-                
                 past_key_values = outputs.past_key_values
                 next_token = outputs.logits[:, -1, :].argmax(dim=-1)
-                
+
                 # Append to input_ids and attention_mask
                 input_ids = torch.cat([input_ids, next_token.unsqueeze(-1)], dim=-1)
                 attention_mask = torch.cat([attention_mask, torch.ones_like(next_token.unsqueeze(-1))], dim=-1)
                 generated_tokens += 1
-                
-                # Update progress bar every 10 tokens
+                pbar.update(1)
+                # Periodically decode to update generated_text
                 if generated_tokens % 10 == 0:
-                    pbar.update(10)
-                    # Decode the new text
                     new_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
                     generated_text = new_text
-            
+
             pbar.close()
         
         # Calculate actual size of the KV cache

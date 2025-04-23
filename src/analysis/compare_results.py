@@ -66,6 +66,8 @@ def load_results(result_dirs):
                     record["speedup"] = data.get("speedup", record["baseline_time"] / record["compressed_time"] if record["compressed_time"] else None)
                 if "compression_ratio" in data:
                     record["compression_ratio"] = data["compression_ratio"]
+                # Capture quantization bits setting if available
+                record["quantization_bits"] = data.get("quantization_bits")
                 all_data.append(record)
             continue
 
@@ -77,6 +79,8 @@ def load_results(result_dirs):
                    "speedup": (results["baseline_perplexity"] / results["compressed_perplexity"] if results["compressed_perplexity"] else None)}
             if "compression_ratio" in results:
                 rec["compression_ratio"] = results["compression_ratio"]
+            # Capture quantization bits from config
+            rec["quantization_bits"] = results.get("config", {}).get("quantization_bits")
             all_data.append(rec)
             continue
 
