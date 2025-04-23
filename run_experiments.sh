@@ -1,4 +1,6 @@
 #!/bin/bash
+# Change to the script's directory so relative paths work correctly
+cd "$(dirname "$0")"
 #SBATCH --job-name=kv_compression
 #SBATCH --output=kv_compression_%j.log
 #SBATCH --error=kv_compression_%j.err
@@ -7,9 +9,17 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 
-# Usage: sbatch run_experiments.sh [config_file]
-# Example: sbatch run_experiments.sh ./configs/qwen_experiment.json
-CONFIG_FILE=${1:-"./configs/default_experiment.json"}
+# Usage: sbatch run_experiments.sh <config_file>
+# Require a config file argument
+if [ $# -lt 1 ]; then
+    echo "Error: No config file provided. Usage: sbatch $0 <config_file>"
+    exit 1
+fi
+CONFIG_FILE=$1
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: Config file $CONFIG_FILE not found!"
+    exit 1
+fi
 
 # Print configuration
 echo "==== KV Cache Compression Experiment ===="
