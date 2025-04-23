@@ -17,6 +17,7 @@ import statistics
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from src.models.autoencoder import Autoencoder
+from transformers.cache_utils import DynamicCache
 
 # Use high-performance timer
 try:
@@ -314,12 +315,11 @@ class KVCacheInference:
             
             past_key_values = None
             if cpu_kv_cache is not None:
+                # Prepare tuple of (k,v) pairs based on compression flag
                 if use_compression:
-                    # Move compressed KV cache to GPU and decompress
                     gpu_compressed_kv = self.move_to_gpu(cpu_kv_cache)
-                    past_key_values = self.decompress_kv_cache(gpu_compressed_kv)
+                    past_tuples = self.decompress_kv_cache(gpu_compressed_kv)
                 else:
-                    # Baseline: optionally quantize raw KV before use
                     cpu_quant_kv = []
                     for k, v in cpu_kv_cache:
                         if self.quantization_bits:
@@ -328,7 +328,9 @@ class KVCacheInference:
                         else:
                             k_q, v_q = k, v
                         cpu_quant_kv.append((k_q.to(self.device), v_q.to(self.device)))
-                    past_key_values = tuple(cpu_quant_kv)
+                    past_tuples = tuple(cpu_quant_kv)
+                # Wrap into a HuggingFace Cache object
+                past_key_values = DynamicCache.from_legacy_cache(past_key_values=past_tuples)
             
             # Generate first token
             with torch.no_grad():
