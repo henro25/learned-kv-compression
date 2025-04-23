@@ -67,15 +67,16 @@ def train_autoencoder(model_name: str, latent_dim: int, learning_rate: float, nu
     
     subprocess.run(cmd)
     
-    return os.path.join(model_dir, "autoencoder_final.pth")
+    return os.path.join(model_dir, "autoencoders_final.pth")
 
 def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int, 
                  cache_sizes: List[float], batch_size: int, num_runs: int, 
-                 output_dir: str, cfg: Dict[str, Any], learning_rate: Optional[float] = None) -> str:
+                 output_dir: str, cfg: Dict[str, Any], learning_rate: Optional[float] = None, quantization_bits: Optional[int] = None) -> str:
     """Run benchmarks with the trained autoencoder."""
     safe_model_name = model_name.replace("/", "_")
     lr_suffix = f"_lr{learning_rate}" if learning_rate is not None else ""
-    result_dir = os.path.join(output_dir, f"benchmark_{safe_model_name}_latent{latent_dim}{lr_suffix}_batch{batch_size}_runs{num_runs}")
+    quant_suffix = f"_quant{quantization_bits}" if quantization_bits is not None else ""
+    result_dir = os.path.join(output_dir, f"benchmark_{safe_model_name}_latent{latent_dim}{lr_suffix}{quant_suffix}_batch{batch_size}_runs{num_runs}")
     os.makedirs(result_dir, exist_ok=True)
     
     # Update config with benchmark parameters
@@ -90,7 +91,8 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
         "cache_sizes": cache_sizes,
         "autoencoder_path": autoencoder_path,
         "output_dir": result_dir,  # Set result_dir as output_dir
-        "learning_rate": learning_rate
+        "learning_rate": learning_rate,
+        "quantization_bits": quantization_bits
     })
 
     # Save updated config
@@ -131,6 +133,7 @@ def main():
     latent_dims = ensure_list(experiment_cfg.get("latent_dims", [8, 16, 32]))
     learning_rates = ensure_list(experiment_cfg.get("learning_rates", [1e-3]))
     cache_sizes = ensure_list(experiment_cfg.get("cache_sizes", [1, 10, 100, 1000]))
+    quant_bits_list = ensure_list(experiment_cfg.get("quantization_bits", [8]))
     num_epochs_list = ensure_list(experiment_cfg.get("num_epochs", [5]))
     num_train_texts_list = ensure_list(experiment_cfg.get("num_train_texts", [100]))
     batch_sizes = ensure_list(experiment_cfg.get("batch_sizes", [64]))
@@ -161,11 +164,15 @@ def main():
     print(f"Latent dimensions: {latent_dims}")
     print(f"Learning rates: {learning_rates}")
     print(f"Cache sizes: {cache_sizes}")
+    print(f"Quantization bits: {quant_bits_list}")
     print(f"Epochs: {num_epochs_list}")
     print(f"Training texts: {num_train_texts_list}")
     print(f"Batch sizes: {batch_sizes}")
     print(f"Number of runs: {num_runs_list}")
     print(f"Output directory: {output_dir}")
+    
+    # Load base configuration
+    cfg = load_config(args.config)
     
     # Record experiment start time
     start_time = time.time()
@@ -200,39 +207,46 @@ def main():
                                 output_dir=model_output_dir,
                                 cfg=experiment_cfg
                             )
+                            print(f"Training finished for {model_id}. Checking for model file...")
+                            time.sleep(5) # Add a pause
+                            check_cmd = f"ls -l {model_path}"
+                            print(f"Running check: {check_cmd}")
+                            subprocess.run(check_cmd, shell=True) # Check if file exists
                         else:
                             # Use existing model if skipping training
                             model_dir = os.path.join(model_output_dir, f"{safe_model_name}_latent{latent_dim}_lr{learning_rate}")
-                            model_path = os.path.join(model_dir, "autoencoder_final.pth")
+                            model_path = os.path.join(model_dir, "autoencoders_final.pth")
                             if not os.path.exists(model_path):
                                 print(f"Warning: Model {model_path} not found. Skipping this configuration.")
                                 continue
                         
-                        # Run benchmarks with various batch sizes and run counts
-                        for batch_size in batch_sizes:
-                            for num_runs in num_runs_list:
-                                result_dir = run_benchmark(
-                                    model_name=model_name,
-                                    autoencoder_path=model_path,
-                                    latent_dim=latent_dim,
-                                    cache_sizes=cache_sizes,
-                                    batch_size=batch_size,
-                                    num_runs=num_runs,
-                                    output_dir=model_output_dir,
-                                    cfg=experiment_cfg,
-                                    learning_rate=learning_rate
-                                )
-                                
-                                all_results.append({
-                                    "model": model_name,
-                                    "latent_dim": latent_dim,
-                                    "learning_rate": learning_rate,
-                                    "num_epochs": num_epochs,
-                                    "num_train_texts": num_train_texts,
-                                    "batch_size": batch_size,
-                                    "num_runs": num_runs,
-                                    "result_dir": result_dir
-                                })
+                        # Run benchmarks for each quantization bit depth
+                        for quant_bits in quant_bits_list:
+                            for batch_size in batch_sizes:
+                                for num_runs in num_runs_list:
+                                    result_dir = run_benchmark(
+                                        model_name=model_name,
+                                        autoencoder_path=model_path,
+                                        latent_dim=latent_dim,
+                                        cache_sizes=cache_sizes,
+                                        batch_size=batch_size,
+                                        num_runs=num_runs,
+                                        output_dir=model_output_dir,
+                                        cfg=experiment_cfg,
+                                        learning_rate=learning_rate,
+                                        quantization_bits=quant_bits
+                                    )
+                                    all_results.append({
+                                        "model": model_name,
+                                        "latent_dim": latent_dim,
+                                        "learning_rate": learning_rate,
+                                        "num_epochs": num_epochs,
+                                        "num_train_texts": num_train_texts,
+                                        "quantization_bits": quant_bits,
+                                        "batch_size": batch_size,
+                                        "num_runs": num_runs,
+                                        "result_dir": result_dir
+                                    })
     
     # Calculate total runtime
     total_time = time.time() - start_time
@@ -248,6 +262,7 @@ def main():
             "models": models,
             "latent_dims": latent_dims,
             "learning_rates": learning_rates,
+            "quantization_bits": quant_bits_list,
             "num_epochs": num_epochs_list,
             "num_train_texts": num_train_texts_list,
             "batch_sizes": batch_sizes,
@@ -263,6 +278,7 @@ def main():
     print(f"Models tested: {models}")
     print(f"Latent dimensions tested: {latent_dims}")
     print(f"Learning rates tested: {learning_rates}")
+    print(f"Quantization bits tested: {quant_bits_list}")
     print(f"Epochs tested: {num_epochs_list}")
     print(f"Training texts tested: {num_train_texts_list}")
     print(f"Batch sizes tested: {batch_sizes}")
@@ -276,7 +292,7 @@ def main():
     for result in all_results:
         print(f"- Model: {result['model']}, Latent dim: {result['latent_dim']}, " +
               f"LR: {result['learning_rate']}, Epochs: {result['num_epochs']}, Texts: {result['num_train_texts']}, " +
-              f"Batch: {result['batch_size']}, Runs: {result['num_runs']}")
+              f"Quantization bits: {result['quantization_bits']}, Batch: {result['batch_size']}, Runs: {result['num_runs']}")
         print(f"  Result dir: {result['result_dir']}")
     
     print(f"{'='*80}")

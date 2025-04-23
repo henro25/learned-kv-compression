@@ -10,7 +10,11 @@
   "buffer_mult": 2,
   "num_hidden_layers": 6,
   "lm_batch_size": 1,
+<<<<<<< HEAD
+  "num_key_value_heads": 12,
+=======
   "num_attention_heads": 12,
+>>>>>>> main
   "eval_interval": 100,
   "config": "src/configs/default_config.json",
   "output_dir": "models",

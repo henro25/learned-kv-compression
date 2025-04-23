@@ -179,7 +179,7 @@ if __name__ == "__main__":
     
     # Example usage
     model_name = "distilgpt2"
-    autoencoder_path = "models/autoencoder_final.pth"
+    autoencoder_path = "models/autoencoder_finals.pth"
     
     # Load model
     model = AutoModelForCausalLM.from_pretrained(model_name)

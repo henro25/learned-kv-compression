@@ -27,7 +27,7 @@ except AttributeError:
     timer = time.time
 
 class KVCacheInference:
-    def __init__(self, model_name, device=None, autoencoder_path=None, latent_dim=16, batch_size=1):
+    def __init__(self, model_name, device=None, autoencoder_path=None, latent_dim=16, batch_size=1, quantization_bits=None):
         """
         Initialize inference with a model and optional autoencoder for compression.
         
@@ -37,6 +37,7 @@ class KVCacheInference:
             autoencoder_path (str, optional): Path to the trained autoencoder model
             latent_dim (int): Dimension of the latent space for the autoencoder
             batch_size (int): Batch size for compression operations
+            quantization_bits (int, optional): Quantization bits for KV and latent representations
         """
         self.model_name = model_name
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -68,6 +69,13 @@ class KVCacheInference:
             self.autoencoder.load_state_dict(torch.load(autoencoder_path, map_location=self.device))
             self.autoencoder.eval()
             print(f"Loaded autoencoder from {autoencoder_path}")
+        
+        self.quantization_bits = quantization_bits
+        # Set up quantization scale if bits provided
+        if quantization_bits:
+            self.quant_scale = 2.0 ** (quantization_bits - 1) - 1
+        else:
+            self.quant_scale = None
     
     def generate_kv_cache(self, text, target_size_mb=1):
         """
@@ -165,6 +173,10 @@ class KVCacheInference:
                 k_shape = k.shape
                 v_shape = v.shape
                 
+                # Quantize latent if specified
+                if self.quantization_bits:
+                    k_latent = self.quantize(k_latent)
+                    v_latent = self.quantize(v_latent)
                 compressed_kv.append((k_latent, v_latent, k_shape, v_shape))
         
         return compressed_kv
@@ -234,6 +246,19 @@ class KVCacheInference:
             ))
         return gpu_compressed_kv
     
+    def quantize(self, x):
+        """Quantize tensor to specified bit depth"""
+        if not self.quantization_bits:
+            return x
+        # Scale to integer range
+        x_scaled = x * self.quant_scale
+        # Clamp
+        x_clamped = torch.clamp(x_scaled, -self.quant_scale, self.quant_scale - 1)
+        # Round
+        x_quant = torch.round(x_clamped)
+        # Scale back
+        return x_quant / self.quant_scale
+    
     def measure_time_to_first_token(self, prompt, cpu_kv_cache=None, use_compression=False, num_runs=5):
         """
         Measure time to first token when continuing generation from a stored KV cache.
@@ -269,8 +294,16 @@ class KVCacheInference:
                     gpu_compressed_kv = self.move_to_gpu(cpu_kv_cache)
                     past_key_values = self.decompress_kv_cache(gpu_compressed_kv)
                 else:
-                    # Just move the uncompressed KV cache to GPU
-                    past_key_values = tuple((k.to(self.device), v.to(self.device)) for k, v in cpu_kv_cache)
+                    # Baseline: optionally quantize raw KV before use
+                    cpu_quant_kv = []
+                    for k, v in cpu_kv_cache:
+                        if self.quantization_bits:
+                            k_q = self.quantize(k)
+                            v_q = self.quantize(v)
+                        else:
+                            k_q, v_q = k, v
+                        cpu_quant_kv.append((k_q.to(self.device), v_q.to(self.device)))
+                    past_key_values = tuple(cpu_quant_kv)
             
             # Generate first token
             with torch.no_grad():
@@ -306,15 +339,18 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=1024, help="Batch size for compression operations")
     parser.add_argument("--num_runs", type=int, default=5, help="Number of runs for timing statistics")
     parser.add_argument("--output", type=str, default="results.json", help="Output file for results")
+    parser.add_argument("--quantization_bits", type=int, default=None, help="Number of bits for quantizing KV tensors before measurement")
     
     args = parser.parse_args()
     
     # Initialize inference
     inference = KVCacheInference(
         model_name=args.model,
+        device=args.device if hasattr(args, 'device') else None,
         autoencoder_path=args.autoencoder,
         latent_dim=args.latent_dim,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        quantization_bits=args.quantization_bits
     )
     
     # Generate prompt and KV cache
@@ -329,9 +365,15 @@ if __name__ == "__main__":
         "benchmarks": {}
     }
     
-    # Measure time to first token without compression (baseline)
-    print("\nMeasuring baseline (no compression)...")
-    cpu_kv_cache = tuple((k.cpu(), v.cpu()) for k, v in past_key_values)
+    # Measure time to first token without compression (baseline), with optional quantization
+    print("\nMeasuring baseline (no compression) with quantization_bits=", inference.quantization_bits)
+    baseline_kv = []
+    for k, v in past_key_values:
+        if inference.quantization_bits:
+            k = inference.quantize(k)
+            v = inference.quantize(v)
+        baseline_kv.append((k.cpu(), v.cpu()))
+    cpu_kv_cache = tuple(baseline_kv)
     time_baseline_avg, time_baseline_std, _ = inference.measure_time_to_first_token(
         generated_text, 
         cpu_kv_cache=cpu_kv_cache, 
@@ -343,10 +385,10 @@ if __name__ == "__main__":
         "std_dev": time_baseline_std
     }
     
-    # If autoencoder is provided, measure with compression
+    # If autoencoder is provided, measure with compression (autoencoder + optional quantization)
     if args.autoencoder:
-        print("\nCompressing KV cache...")
-        # Compress KV cache
+        print("\nCompressing KV cache with quantization_bits=", inference.quantization_bits)
+        # Compress KV cache (latent + quantization)
         compressed_kv = inference.compress_kv_cache(past_key_values)
         cpu_compressed_kv = inference.move_to_cpu(compressed_kv)
         
@@ -363,12 +405,23 @@ if __name__ == "__main__":
             "std_dev": time_compressed_std
         }
         
-        # Calculate compression ratio
-        original_size = sum(k.nelement() * k.element_size() + v.nelement() * v.element_size() 
-                           for k, v in past_key_values)
-        compressed_size = sum(k.nelement() * k.element_size() + v.nelement() * v.element_size() 
-                             for k, v, _, _ in compressed_kv)
-        compression_ratio = original_size / compressed_size
+        # Calculate compression ratio using quantized bit-depth for both baseline and compressed
+        if inference.quantization_bits:
+            bytes_per_element = inference.quantization_bits / 8
+        else:
+            # fallback to native float32 size
+            bytes_per_element = baseline_kv[0][0].element_size()  # assume float32
+        # original size in bytes
+        original_size = sum(
+            k.nelement() * bytes_per_element + v.nelement() * bytes_per_element
+            for k, v in cpu_kv_cache
+        )
+        # compressed size in bytes (latent representation)
+        compressed_size = sum(
+            k_latent.nelement() * bytes_per_element + v_latent.nelement() * bytes_per_element
+            for k_latent, v_latent, _, _ in compressed_kv
+        )
+        compression_ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
         results["compression_ratio"] = compression_ratio
     
     # Save results
@@ -379,7 +432,7 @@ if __name__ == "__main__":
     print(f"Time to first token (baseline): {time_baseline_avg:.4f}s ± {time_baseline_std:.4f}s")
     if args.autoencoder:
         print(f"Time to first token (compressed): {time_compressed_avg:.4f}s ± {time_compressed_std:.4f}s")
-        print(f"Compression ratio: {compression_ratio:.2f}x")
+        print(f"Compression ratio: {compression_ratio:.2f}x (using {inference.quantization_bits or 32}-bit quantization)")
         
         # Calculate speedup or slowdown
         speedup = time_baseline_avg / time_compressed_avg

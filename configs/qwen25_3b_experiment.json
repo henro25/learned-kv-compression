@@ -1,11 +1,12 @@
 {
   "models": ["Qwen/Qwen2.5-3B"],
   "latent_dims": [8, 16, 32],
-  "learning_rates": [1e-3, 5e-4, 1e-4],
+  "learning_rates": [5e-4, 1e-4],
   "num_epochs": [5],
   "num_train_texts": [10000],
   "seed": 42,
   "skip_training": false,
+  "quantization_bits": [2, 4, 8, 16],
   "output_dir": "experiment_results_Qwen",
 
   "eval_interval": 100,
