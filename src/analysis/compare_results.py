@@ -40,20 +40,77 @@ def load_results(result_dirs):
         with open(result_file, 'r') as f:
             results = json.load(f)
         
-        # Skip files that do not have the expected benchmarks section
-        if "benchmarks" not in results:
-            print(f"Warning: 'benchmarks' not found in {result_file}; skipping this directory.")
-            continue
-        
         # Extract model info (fallback to config if not directly present)
         model_name = results.get("model") or results.get("config", {}).get("model_name") or results.get("config", {}).get("name")
         latent_dim = results.get("latent_dim") or results.get("config", {}).get("latent_dim")
-        # Skip if essential metadata is missing
         if model_name is None or latent_dim is None:
             print(f"Warning: 'model' or 'latent_dim' missing in {result_file}; skipping this directory.")
             continue
+
+        # Handle old-style 'benchmarks' format
+        if isinstance(results.get("benchmarks"), dict):
+            for size_mb, data in results["benchmarks"].items():
+                record = {
+                    "model": model_name,
+                    "latent_dim": latent_dim,
+                    "cache_size_mb": float(size_mb),
+                    "actual_size_mb": data.get("actual_size_mb")
+                }
+                
+                # Handle new results format with avg and std_dev
+                if isinstance(data["times"]["baseline"], dict):
+                    record["baseline_time"] = data["times"]["baseline"]["avg"]
+                    record["baseline_std"] = data["times"]["baseline"]["std_dev"]
+                else:
+                    # Handle older format for backward compatibility
+                    record["baseline_time"] = data["times"]["baseline"]
+                    record["baseline_std"] = 0.0
+                
+                # Add compressed data if available
+                if "compressed" in data["times"]:
+                    if isinstance(data["times"]["compressed"], dict):
+                        record["compressed_time"] = data["times"]["compressed"]["avg"]
+                        record["compressed_std"] = data["times"]["compressed"]["std_dev"]
+                    else:
+                        # Handle older format for backward compatibility
+                        record["compressed_time"] = data["times"]["compressed"]
+                        record["compressed_std"] = 0.0
+                    
+                    # Calculate speedup if not already provided
+                    if "speedup" in data:
+                        record["speedup"] = data["speedup"]
+                    else:
+                        record["speedup"] = record["baseline_time"] / record["compressed_time"]
+                
+                if "compression_ratio" in data:
+                    record["compression_ratio"] = data["compression_ratio"]
+                
+                all_data.append(record)
+            continue
+
+        # Handle new-style perplexity outputs
+        if "baseline_perplexity" in results and "compressed_perplexity" in results:
+            record = {
+                "model": model_name,
+                "latent_dim": latent_dim,
+                "cache_size_mb": None,
+                "actual_size_mb": None,
+                "baseline_time": results.get("baseline_perplexity"),
+                "baseline_std": 0.0,
+                "compressed_time": results.get("compressed_perplexity"),
+                "compressed_std": 0.0,
+            }
+            # Compute speedup as ratio of perplexities (if desired)
+            if record["baseline_time"] and record["compressed_time"]:
+                record["speedup"] = record["baseline_time"] / record["compressed_time"]
+            all_data.append(record)
+            continue
+
+        # Neither format matched, skip
+        print(f"Warning: Unrecognized result format in {result_file}; skipping this directory.")
+        continue
         
-        # Process each benchmark
+        # Process each benchmark (old style)
         for size_mb, data in results["benchmarks"].items():
             record = {
                 "model": model_name,
@@ -77,19 +134,16 @@ def load_results(result_dirs):
                     record["compressed_time"] = data["times"]["compressed"]["avg"]
                     record["compressed_std"] = data["times"]["compressed"]["std_dev"]
                 else:
-                    # Handle older format for backward compatibility
                     record["compressed_time"] = data["times"]["compressed"]
                     record["compressed_std"] = 0.0
-                
-                # Calculate speedup if not already provided
                 if "speedup" in data:
                     record["speedup"] = data["speedup"]
                 else:
                     record["speedup"] = record["baseline_time"] / record["compressed_time"]
-            
+
             if "compression_ratio" in data:
                 record["compression_ratio"] = data["compression_ratio"]
-            
+
             all_data.append(record)
     
     # Convert to DataFrame and sort
