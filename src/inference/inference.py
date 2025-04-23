@@ -111,19 +111,27 @@ class KVCacheInference:
         max_seq_len = self.model.config.max_position_embeddings
         # Compute number of tokens target
         target_tokens = int((target_size_mb * 1024 * 1024) / bytes_per_token)
-        target_tokens = min(target_tokens, max_seq_len)
+        # Prevent KV cache from reaching full capacity so one-step generation still works
+        target_tokens = min(target_tokens, max_seq_len - 1)
 
-        # Tokenize prompt
+        # Tokenize prompt and move to device
         inputs = self.tokenizer(text, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         input_ids = inputs["input_ids"]
+        # Provide attention mask for reliable generation
+        attention_mask = inputs.get("attention_mask")
         prompt_len = input_ids.size(1)
 
         # If no generation needed, do single forward
         with torch.no_grad():
             if target_tokens <= prompt_len:
-                # Just get past_key_values from forward
-                out = self.model(input_ids, use_cache=True, return_dict=True)
+                # Just get past_key_values from forward (with mask)
+                out = self.model(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    use_cache=True,
+                    return_dict=True
+                )
                 past_key_values = out.past_key_values
                 generated_text = text
                 seq_len = prompt_len
@@ -132,6 +140,7 @@ class KVCacheInference:
                 # Use HF generate for stable caching
                 gen_out = self.model.generate(
                     input_ids,
+                    attention_mask=attention_mask,
                     max_new_tokens=gen_count,
                     use_cache=True,
                     return_dict_in_generate=True
@@ -280,9 +289,12 @@ class KVCacheInference:
         """
         # Use a fallback generate-based loop in case manual inference fails
         try:
-            # Encode prompt
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
-            input_ids = inputs["input_ids"]
+            # Tokenize prompt and move to device for incremental step
+            tokenized = self.tokenizer(prompt, return_tensors="pt")
+            full_input_ids = tokenized["input_ids"].to(self.device)
+            # Use only the last token and build a mask for it
+            input_ids = full_input_ids[:, -1].unsqueeze(-1)
+            attention_mask = torch.ones_like(input_ids, device=self.device)
             # Build and wrap past_key_values if provided
             disable_cache = isinstance(self.model_name, str) and self.model_name.lower().startswith("qwen")
             past = None
@@ -305,9 +317,12 @@ class KVCacheInference:
             for _ in range(num_runs):
                 if torch.cuda.is_available(): torch.cuda.empty_cache()
                 start = timer()
-                # one-step generation
+                # one-step generation with mask and pad_token_id
                 out = self.model.generate(
                     input_ids,
+                    attention_mask=attention_mask,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
                     past_key_values=past,
                     max_new_tokens=1,
                     use_cache=not disable_cache,
@@ -406,16 +421,33 @@ if __name__ == "__main__":
         json.dump(results, f, indent=2)
     
     print(f"\nResults saved to {args.output}")
-    print(f"Time to first token (baseline): {time_baseline_avg:.4f}s ± {time_baseline_std:.4f}s")
+    # Safely report baseline timing
+    baseline = results.get("benchmarks", {}).get("baseline", {})
+    bavg = baseline.get("avg_time", None)
+    bstd = baseline.get("std_dev", None)
+    if bavg is not None:
+        print(f"Time to first token (baseline): {bavg:.4f}s ± {bstd:.4f}s")
+    else:
+        print("Baseline timing not available")
+    # Safely report compressed timing and speedup
     if args.autoencoder:
-        print(f"Time to first token (compressed): {time_compressed_avg:.4f}s ± {time_compressed_std:.4f}s")
-        print(f"Compression ratio: {results['compression_ratio']:.2f}x (using {inference.quantization_bits or 32}-bit quantization)")
-        
-        # Calculate speedup or slowdown
-        speedup = time_baseline_avg / time_compressed_avg
-        print(f"Speedup factor: {speedup:.2f}x")
-        
-        if speedup > 1.0:
-            print(f"Compression provides {(speedup-1)*100:.1f}% faster time to first token")
+        compressed = results.get("benchmarks", {}).get("compressed", {})
+        cavg = compressed.get("avg_time", None)
+        cstd = compressed.get("std_dev", None)
+        if cavg is not None:
+            print(f"Time to first token (compressed): {cavg:.4f}s ± {cstd:.4f}s")
         else:
-            print(f"Compression adds {(1-speedup)*100:.1f}% overhead to time to first token")
+            print("Compressed timing not available")
+        cr = results.get("compression_ratio", None)
+        if cr is not None:
+            print(f"Compression ratio: {cr:.2f}x (using {inference.quantization_bits or 32}-bit quantization)")
+        # Compute speedup only if valid
+        if bavg and cavg:
+            speedup = bavg / cavg
+            print(f"Speedup factor: {speedup:.2f}x")
+            if speedup > 1.0:
+                print(f"Compression provides {(speedup-1)*100:.1f}% faster time to first token")
+            else:
+                print(f"Compression adds {(1-speedup)*100:.1f}% overhead to time to first token")
+        else:
+            print("Speedup factor: n/a (zero or missing timing)")
