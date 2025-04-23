@@ -90,6 +90,11 @@ def load_results(result_dirs):
 
 def plot_time_comparison(df, output_dir):
     """Plot time to first token comparison across different latent dimensions"""
+    # Skip if no cache sizes to plot (e.g., perplexity-only results)
+    if df["cache_size_mb"].dropna().empty:
+        print("Warning: No valid cache_size_mb values; skipping time comparison plot.")
+        return
+    
     plt.figure(figsize=(12, 8))
     
     # Plot baseline as reference
@@ -193,8 +198,9 @@ def plot_compression_ratio(df, output_dir):
 
 def plot_speedup(df, output_dir):
     """Plot speedup across different latent dimensions"""
-    if "speedup" not in df.columns:
-        print("Warning: Speedup data not available")
+    # Skip if no cache sizes to plot (e.g., perplexity-only results)
+    if df["cache_size_mb"].dropna().empty:
+        print("Warning: No valid cache_size_mb values; skipping speedup plot.")
         return
     
     plt.figure(figsize=(12, 8))
