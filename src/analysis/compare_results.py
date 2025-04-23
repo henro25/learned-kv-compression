@@ -40,9 +40,13 @@ def load_results(result_dirs):
         with open(result_file, 'r') as f:
             results = json.load(f)
         
-        # Extract model info
-        model_name = results["model"]
-        latent_dim = results["latent_dim"]
+        # Extract model info (fallback to config if not directly present)
+        model_name = results.get("model") or results.get("config", {}).get("model_name") or results.get("config", {}).get("name")
+        latent_dim = results.get("latent_dim") or results.get("config", {}).get("latent_dim")
+        # Skip if essential metadata is missing
+        if model_name is None or latent_dim is None:
+            print(f"Warning: 'model' or 'latent_dim' missing in {result_file}; skipping this directory.")
+            continue
         
         # Process each benchmark
         for size_mb, data in results["benchmarks"].items():
