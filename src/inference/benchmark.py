@@ -74,14 +74,8 @@ def evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, max_le
             mask = inputs["attention_mask"].to(model.device)
             past = None
             for t in range(input_ids.size(1) - 1):
-                if not mask[0, t+1]:
-                    continue
-                out = model(
-                    input_ids[:, t:t+1],
-                    attention_mask=mask[:, t:t+1],
-                    past_key_values=past,
-                    use_cache=True
-                )
+                if not mask[0, t+1]: continue
+                out = model(input_ids[:, t:t+1], attention_mask=mask[:, t:t+1], past_key_values=past, use_cache=True)
                 past = compress_kv_cache(out.past_key_values, autoencoders, quantization_bits)
                 logits = out.logits[..., -1, :]
                 loss = F.cross_entropy(logits, input_ids[:, t+1], reduction='none')
@@ -110,20 +104,14 @@ def evaluate_with_kv_quantization(model, tokenizer, texts, max_length=1024, quan
             mask = inputs["attention_mask"].to(model.device)
             past = None
             for t in range(input_ids.size(1) - 1):
-                if not mask[0, t+1]:
-                    continue
-                out = model(
-                    input_ids[:, t:t+1],
-                    attention_mask=mask[:, t:t+1],
-                    past_key_values=past,
-                    use_cache=True
-                )
+                if not mask[0, t+1]: continue
+                out = model(input_ids[:, t:t+1], attention_mask=mask[:, t:t+1], past_key_values=past, use_cache=True)
                 new_past = []
-                for k, v in out.past_key_values:
+                for kk, vv in out.past_key_values:
                     if quantization_bits:
-                        k = quantize_tensor(k, quantization_bits)
-                        v = quantize_tensor(v, quantization_bits)
-                    new_past.append((k, v))
+                        kk = quantize_tensor(kk, quantization_bits)
+                        vv = quantize_tensor(vv, quantization_bits)
+                    new_past.append((kk, vv))
                 past = DynamicCache.from_legacy_cache(past_key_values=tuple(new_past))
                 logits = out.logits[..., -1, :]
                 loss = F.cross_entropy(logits, input_ids[:, t+1], reduction='none')
@@ -139,65 +127,43 @@ def evaluate_longbench(model, tokenizer, autoencoders, cfg, quantization_bits=No
     for s in subsets:
         all_inputs = load_dataset("THUDM/LongBench", s, trust_remote_code=True)["test"]["input"]
         texts = [t for t in all_inputs if t.strip()]
-        if num_eval:
-            texts = texts[:num_eval]
-        base_ppl = calculate_perplexity(model, tokenizer, texts, cfg["max_seq_len"], desc=f"PPL {s}")
-        comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, cfg["max_seq_len"], quantization_bits)
-        results["baseline"][s] = base_ppl
-        results["compressed"][s] = comp_ppl
+        if num_eval: texts = texts[:num_eval]
+        results["baseline"][s] = calculate_perplexity(model, tokenizer, texts, cfg["max_seq_len"], desc=f"PPL {s}")
+        results["compressed"][s] = evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, cfg["max_seq_len"], quantization_bits)
     return results
 
 
 def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
-    # Model + AE setup
     head_dim = cfg["hidden_size"] // cfg["num_attention_heads"]
     device = torch.device(cfg.get("device", "cuda"))
-    dtype = (
-        torch.bfloat16 if cfg.get("dtype") == 'bf16' else
-        torch.float16 if cfg.get("dtype") in ('fp16','f16') else torch.float32
-    )
+    dtype = (torch.bfloat16 if cfg.get("dtype")== 'bf16' else torch.float16 if cfg.get("dtype") in ('fp16','f16') else torch.float32)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    # ensure pad token exists
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=dtype,
-        device_map={"": device},
-        output_hidden_states=True,
-        output_attentions=True,
-        use_cache=True
-    )
+    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=dtype, device_map={"":device}, output_hidden_states=True, output_attentions=True, use_cache=True)
     model.config.pad_token_id = tokenizer.pad_token_id
 
     chk = torch.load(autoencoder_path) if os.path.exists(autoencoder_path) else None
     autoencoders = []
     for i in range(cfg["num_hidden_layers"]):
         ae = Autoencoder(input_dim=head_dim, latent_dim=latent_dim, dtype=dtype).to(device)
-        if chk:
-            ae.load_state_dict(chk[f"layer_{i}"])
-        ae.eval()
-        autoencoders.append(ae)
+        if chk: ae.load_state_dict(chk[f"layer_{i}"])
+        ae.eval(); autoencoders.append(ae)
 
-    # Load texts
     ds = load_dataset("wikitext","wikitext-103-raw-v1")
     all_texts = [t for t in ds['test']['text'] if t.strip()]
-    num_eval = cfg.get("num_eval_texts")
-    txts = all_texts[:num_eval] if num_eval else all_texts
+    txts = all_texts[:cfg.get("num_eval_texts")] if cfg.get("num_eval_texts") else all_texts
 
-    # 1) Perplexity benchmarks
     quant_bits = cfg.get("quantization_bits")
     base_ppl = evaluate_with_kv_quantization(model, tokenizer, txts, cfg["max_seq_len"], quant_bits)
     comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, txts, cfg["max_seq_len"], quant_bits)
     longbench = evaluate_longbench(model, tokenizer, autoencoders, cfg, quant_bits)
 
-    # 2) Cache-size timing benchmarks (unchanged)
     cache_sizes = cfg.get("cache_sizes", [])
     num_runs = cfg.get("num_runs", 1)
     batch_size = cfg.get("batch_size", 1)
-    dtype_bytes = 4 if dtype == torch.float32 else 2
+    dtype_bytes = 4 if dtype==torch.float32 else 2
 
     benchmarks = {}
     for size_mb in cache_sizes:
@@ -205,64 +171,51 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
         seq_len = min(tokens, cfg.get("max_seq_len", tokens))
         texts = txts[:batch_size]
         inputs = tokenizer(texts, return_tensors='pt', padding=True, truncation=True, max_length=seq_len)
-        input_ids = inputs['input_ids'].to(device)
-        mask = inputs['attention_mask'].to(device)
+        input_ids, mask = inputs['input_ids'].to(device), inputs['attention_mask'].to(device)
 
         orig_bytes = batch_size*cfg["num_attention_heads"]*seq_len*head_dim*dtype_bytes*2
-        comp_bytes = batch_size*cfg["num_attention_heads"]*seq_len*latent_dim*dtype_bytes*2
-        actual_mb = orig_bytes/(1024**2)
-        compression = orig_bytes/comp_bytes if comp_bytes>0 else None
+        # correctly account for quantized latent storage
+        elem_bytes = (quant_bits/8) if quant_bits else dtype_bytes
+        comp_bytes = batch_size*cfg["num_attention_heads"]*seq_len*latent_dim*elem_bytes*2
+        actual_orig_mb = orig_bytes/(1024**2)
+        actual_comp_mb = comp_bytes/(1024**2)
+        compression = actual_orig_mb/actual_comp_mb if actual_comp_mb>0 else None
 
         base_times=[]
         for _ in range(num_runs):
-            torch.cuda.synchronize()
-            start=time.time()
+            torch.cuda.synchronize(); start=time.time()
             _=model(input_ids[:,:1], attention_mask=mask[:,:1], use_cache=True)
-            torch.cuda.synchronize()
-            base_times.append(time.time()-start)
-        b_avg,b_std = float(np.mean(base_times)), float(np.std(base_times))
+            torch.cuda.synchronize(); base_times.append(time.time()-start)
+        b_avg, b_std = float(np.mean(base_times)), float(np.std(base_times))
 
         comp_times=[]
         for _ in range(num_runs):
-            out0 = model(input_ids[:,:1], attention_mask=mask[:,:1], use_cache=True)
-            past = compress_kv_cache(out0.past_key_values, autoencoders, quant_bits)
-            torch.cuda.synchronize()
-            start=time.time()
+            out0=model(input_ids[:,:1], attention_mask=mask[:,:1], use_cache=True)
+            past=compress_kv_cache(out0.past_key_values, autoencoders, quant_bits)
+            torch.cuda.synchronize(); start=time.time()
             _=model(input_ids[:,1:2], attention_mask=mask[:,1:2], past_key_values=past, use_cache=True)
-            torch.cuda.synchronize()
-            comp_times.append(time.time()-start)
-        c_avg,c_std = float(np.mean(comp_times)), float(np.std(comp_times))
+            torch.cuda.synchronize(); comp_times.append(time.time()-start)
+        c_avg, c_std = float(np.mean(comp_times)), float(np.std(comp_times))
 
         benchmarks[str(size_mb)] = {
-            "actual_size_mb": actual_mb,
+            "actual_size_mb": actual_orig_mb,
+            "compressed_size_mb": actual_comp_mb,
             "compression_ratio": compression,
             "times": {"baseline": {"avg":b_avg,"std_dev":b_std}, "compressed": {"avg":c_avg,"std_dev":c_std}},
             "speedup": b_avg/c_avg if c_avg>0 else None
         }
 
-    results = {
-        "baseline_perplexity": base_ppl,
-        "compressed_perplexity": comp_ppl,
-        "longbench_results": longbench,
-        "benchmarks": benchmarks,
-        "config": cfg
-    }
-
+    results = {"baseline_perplexity":base_ppl,"compressed_perplexity":comp_ppl,"longbench_results":longbench,"benchmarks":benchmarks,"config":cfg}
     os.makedirs(output_dir, exist_ok=True)
-    out_file = os.path.join(output_dir, "benchmark_results.json")
-    with open(out_file, 'w') as f:
+    with open(os.path.join(output_dir,"benchmark_results.json"), 'w') as f:
         json.dump(results, f, indent=2)
-
-    print(f"Saved benchmark results to {out_file}")
+    print(f"Saved benchmark results to {os.path.join(output_dir,'benchmark_results.json')}")
     print(f"Baseline PPL: {base_ppl:.2f}, Compressed PPL: {comp_ppl:.2f}")
     return results
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run KV cache benchmarks (perplexity + cache sizes)")
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
     args = parser.parse_args()
     cfg = json.load(open(args.config))
-    run_benchmark(
-        cfg["model_name"], cfg["autoencoder_path"], cfg["latent_dim"], cfg.get("output_dir"), cfg
-    )
+    run_benchmark(cfg["model_name"],cfg["autoencoder_path"],cfg["latent_dim"],cfg.get("output_dir"),cfg)
