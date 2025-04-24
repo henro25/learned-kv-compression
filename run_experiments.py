@@ -208,11 +208,7 @@ def main():
                                 output_dir=model_output_dir,
                                 cfg=experiment_cfg
                             )
-                            print(f"Training finished for {model_id}. Checking for model file...")
-                            time.sleep(5) # Add a pause
-                            check_cmd = f"ls -l {model_path}"
-                            print(f"Running check: {check_cmd}")
-                            subprocess.run(check_cmd, shell=True) # Check if file exists
+                            print(f"Training finished for {model_id}.")
                         else:
                             # Use existing model if skipping training
                             model_dir = os.path.join(model_output_dir, f"{safe_model_name}_latent{latent_dim}_lr{learning_rate}")
@@ -261,6 +257,10 @@ def main():
     
     # Save overall experiment summary
     summary_path = os.path.join(output_dir, "experiment_summary.json")
+    
+    # Make sure the summary path exists
+    os.makedirs(os.path.dirname(summary_path), exist_ok=True)
+    
     with open(summary_path, "w") as f:
         json.dump({
             "total_runtime_seconds": total_time,
