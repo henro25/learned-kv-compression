@@ -255,6 +255,7 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
 
     os.makedirs(output_dir, exist_ok=True)
     out_file = os.path.join(output_dir, "benchmark_results.json")
+    print(f"[DEBUG] Results printed to {out_file}")
     with open(out_file, 'w') as f:
         json.dump(results, f, indent=2)
 
