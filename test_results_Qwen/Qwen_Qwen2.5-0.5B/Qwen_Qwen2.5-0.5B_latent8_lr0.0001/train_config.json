@@ -13,10 +13,8 @@
   "seed": 42,
   "skip_training": false,
   "quantization_bits": [
-    2,
     4,
-    8,
-    16
+    8
   ],
   "output_dir": "/content/learned-kv-compression/test_results_Qwen/Qwen_Qwen2.5-0.5B/Qwen_Qwen2.5-0.5B_latent8_lr0.0001",
   "eval_interval": 100,

@@ -1,21 +1,21 @@
 {
-  "total_runtime_seconds": 384.40708112716675,
-  "config_file": "configs/qwen25_0.5b_test.json",
+  "total_runtime_seconds": 104.50317668914795,
+  "config_file": "configs/distilgpt2_test.json",
   "models": [
-    "Qwen/Qwen2.5-0.5B"
+    "distilgpt2"
   ],
   "latent_dims": [
     8
   ],
   "learning_rates": [
-    0.0001
+    0.0005
   ],
   "quantization_bits": [
     4,
     8
   ],
   "num_epochs": [
-    1
+    2
   ],
   "num_train_texts": [
     100
@@ -34,10 +34,10 @@
   ],
   "results": [
     {
-      "model": "Qwen/Qwen2.5-0.5B",
+      "model": "distilgpt2",
       "latent_dim": 8,
-      "learning_rate": 0.0001,
-      "num_epochs": 1,
+      "learning_rate": 0.0005,
+      "num_epochs": 2,
       "num_train_texts": 100,
       "quantization_bits": 4,
       "batch_size": 64,
@@ -48,13 +48,13 @@
         100,
         1000
       ],
-      "result_dir": "/content/learned-kv-compression/test_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent8_lr0.0001_quant4_batch64_runs5"
+      "result_dir": "/content/learned-kv-compression/test_results_distilgpt2/distilgpt2/benchmark_distilgpt2_latent8_lr0.0005_quant4_batch64_runs5"
     },
     {
-      "model": "Qwen/Qwen2.5-0.5B",
+      "model": "distilgpt2",
       "latent_dim": 8,
-      "learning_rate": 0.0001,
-      "num_epochs": 1,
+      "learning_rate": 0.0005,
+      "num_epochs": 2,
       "num_train_texts": 100,
       "quantization_bits": 8,
       "batch_size": 64,
@@ -65,7 +65,7 @@
         100,
         1000
       ],
-      "result_dir": "/content/learned-kv-compression/test_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent8_lr0.0001_quant8_batch64_runs5"
+      "result_dir": "/content/learned-kv-compression/test_results_distilgpt2/distilgpt2/benchmark_distilgpt2_latent8_lr0.0005_quant8_batch64_runs5"
     }
   ]
 }

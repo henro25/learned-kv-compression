@@ -1,0 +1,133 @@
+{
+  "baseline_perplexity": 95.94275665283203,
+  "compressed_perplexity": 5100.8466796875,
+  "longbench_results": {
+    "baseline": {
+      "narrativeqa": 385.8912048339844,
+      "hotpotqa": 231.4687042236328,
+      "2wikimqa": 376.6250305175781,
+      "musique": 185.3456268310547,
+      "dureader": 83.78197479248047
+    },
+    "compressed": {
+      "narrativeqa": 6065.01220703125,
+      "hotpotqa": 4362.34033203125,
+      "2wikimqa": 4544.68115234375,
+      "musique": 2185.93798828125,
+      "dureader": 4722.3779296875
+    }
+  },
+  "benchmarks": {
+    "1": {
+      "actual_size_mb": 0.9375,
+      "compressed_size_mb": 0.029296875,
+      "compression_ratio": 32.0,
+      "times": {
+        "baseline": {
+          "avg": 0.007525300979614258,
+          "std_dev": 0.0004623643482639748
+        },
+        "compressed": {
+          "avg": 0.007657575607299805,
+          "std_dev": 0.0002840432299729428
+        }
+      },
+      "speedup": 0.9827263047119702
+    },
+    "10": {
+      "actual_size_mb": 9.9375,
+      "compressed_size_mb": 0.310546875,
+      "compression_ratio": 32.0,
+      "times": {
+        "baseline": {
+          "avg": 0.007380247116088867,
+          "std_dev": 3.0636184404428e-05
+        },
+        "compressed": {
+          "avg": 0.007590007781982422,
+          "std_dev": 2.6026486729098694e-05
+        }
+      },
+      "speedup": 0.9723635769660874
+    },
+    "100": {
+      "actual_size_mb": 99.9375,
+      "compressed_size_mb": 3.123046875,
+      "compression_ratio": 32.0,
+      "times": {
+        "baseline": {
+          "avg": 0.00741429328918457,
+          "std_dev": 1.0331422854576752e-05
+        },
+        "compressed": {
+          "avg": 0.007575368881225586,
+          "std_dev": 2.042154990569909e-05
+        }
+      },
+      "speedup": 0.9787369308918781
+    },
+    "1000": {
+      "actual_size_mb": 192.0,
+      "compressed_size_mb": 6.0,
+      "compression_ratio": 32.0,
+      "times": {
+        "baseline": {
+          "avg": 0.007388591766357422,
+          "std_dev": 4.5665716509517324e-05
+        },
+        "compressed": {
+          "avg": 0.0075683116912841795,
+          "std_dev": 3.212884753755956e-05
+        }
+      },
+      "speedup": 0.9762536306302333
+    }
+  },
+  "config": {
+    "models": [
+      "distilgpt2"
+    ],
+    "latent_dims": [
+      8
+    ],
+    "learning_rates": [
+      0.0005
+    ],
+    "num_epochs": [
+      2
+    ],
+    "num_train_texts": [
+      100
+    ],
+    "seed": 42,
+    "skip_training": false,
+    "quantization_bits": 4,
+    "output_dir": "/content/learned-kv-compression/test_results_distilgpt2/distilgpt2/benchmark_distilgpt2_latent8_lr0.0005_quant4_batch64_runs5",
+    "eval_interval": 1000,
+    "num_eval_texts": 5,
+    "lm_batch_size": 1,
+    "buffer_size": 256,
+    "batch_size": 64,
+    "dtype": "bf16",
+    "buffer_mult": 2,
+    "gradient_accumulation_steps": 2,
+    "device": "cuda",
+    "name": "distilgpt2",
+    "num_hidden_layers": 6,
+    "num_attention_heads": 12,
+    "max_seq_len": 1024,
+    "hidden_size": 768,
+    "vocab_size": 50257,
+    "cache_sizes": [
+      1,
+      10,
+      100,
+      1000
+    ],
+    "model_name": "distilgpt2",
+    "latent_dim": 8,
+    "num_runs": 5,
+    "autoencoder_path": "/content/learned-kv-compression/test_results_distilgpt2/distilgpt2/distilgpt2_latent8_lr0.0005/autoencoders_final.pth",
+    "learning_rate": 0.0005
+  }
+}
