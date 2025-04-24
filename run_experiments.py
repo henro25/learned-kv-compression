@@ -97,19 +97,10 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
             cmd += ["--quantization_bits", str(quantization_bits)]
         cmd += ["--output", out_file]
         print(f"Running time benchmark for cache size {size} MB: {' '.join(cmd)}")
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"Warning: Benchmark failed for cache size {size} MB: {e}")
-            # Skip this size if it fails
-            continue
+        subprocess.run(cmd, check=True)
         # Load the single-size results
-        try:
-            with open(out_file) as f:
-                single = json.load(f)
-        except Exception as e:
-            print(f"Warning: Failed to load results for cache size {size} MB: {e}")
-            continue
+        with open(out_file) as f:
+            single = json.load(f)
         # Build the record
         key = str(size)
         b = single["benchmarks"]["baseline"]
@@ -125,8 +116,6 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
             entry["speedup"] = (b["avg_time"] / c["avg_time"] if c["avg_time"] else None)
         if "compression_ratio" in single:
             entry["compression_ratio"] = single["compression_ratio"]
-        # Record the quantization bit setting for this entry
-        entry["quantization_bits"] = quantization_bits
         combined["benchmarks"][key] = entry
     # Write out the combined results
     result_file = os.path.join(result_dir, "benchmark_results.json")
@@ -261,35 +250,6 @@ def main():
                                     )
                                     # Store absolute path for result_dir
                                     result_dir = os.path.abspath(result_dir)
-                                    # Run perplexity benchmarking for this configuration
-                                    # Build a unique directory for perplexity results
-                                    lr_suf = f"_lr{learning_rate}"
-                                    quant_suf = f"_quant{quant_bits}"
-                                    perplex_dir = os.path.join(model_output_dir, f"perplexity_{safe_model_name}_latent{latent_dim}{lr_suf}{quant_suf}")
-                                    os.makedirs(perplex_dir, exist_ok=True)
-                                    # Create config for perplexity benchmark
-                                    perplex_cfg = {
-                                        "model_name": model_name,
-                                        "autoencoder_path": model_path,
-                                        "latent_dim": latent_dim,
-                                        "num_hidden_layers": experiment_cfg["num_hidden_layers"],
-                                        "num_attention_heads": experiment_cfg["num_attention_heads"],
-                                        "hidden_size": experiment_cfg["hidden_size"],
-                                        "device": experiment_cfg.get("device"),
-                                        "dtype": experiment_cfg.get("dtype"),
-                                        "num_eval_texts": experiment_cfg.get("num_eval_texts"),
-                                        "max_seq_len": experiment_cfg.get("max_seq_len"),
-                                        "quantization_bits": quant_bits,
-                                        "output_dir": perplex_dir
-                                    }
-                                    config_path = os.path.join(perplex_dir, "benchmark_config.json")
-                                    with open(config_path, "w") as f:
-                                        json.dump(perplex_cfg, f, indent=2)
-                                    # Invoke the perplexity benchmark script
-                                    perplex_cmd = ["python3", "-m", "src.inference.benchmark", "--config", config_path]
-                                    print(f"Running perplexity benchmark: {' '.join(perplex_cmd)}")
-                                    subprocess.run(perplex_cmd, check=True)
-                                    perplex_dir = os.path.abspath(perplex_dir)
                                     # Append experiment result with cache sizes
                                     all_results.append({
                                         "model": model_name,
@@ -301,8 +261,7 @@ def main():
                                         "batch_size": batch_size,
                                         "num_runs": num_runs,
                                         "cache_sizes": cache_sizes,
-                                        "result_dir": result_dir,
-                                        "perplexity_dir": perplex_dir
+                                        "result_dir": result_dir
                                     })
     
     # Calculate total runtime
