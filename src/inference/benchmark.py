@@ -1,8 +1,3 @@
-"""
-Module Name: benchmark.py
-Description: Benchmark with layer-wise autoencoders
-"""
-
 import os
 import json
 import argparse
@@ -162,6 +157,11 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
         torch.float16 if cfg.get("dtype") in ('fp16','f16') else torch.float32
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # ensure pad token exists
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=dtype,
@@ -170,6 +170,7 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
         output_attentions=True,
         use_cache=True
     )
+    model.config.pad_token_id = tokenizer.pad_token_id
 
     chk = torch.load(autoencoder_path) if os.path.exists(autoencoder_path) else None
     autoencoders = []
@@ -192,16 +193,14 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
     comp_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, txts, cfg["max_seq_len"], quant_bits)
     longbench = evaluate_longbench(model, tokenizer, autoencoders, cfg, quant_bits)
 
-    # 2) Cache-size timing benchmarks
+    # 2) Cache-size timing benchmarks (unchanged)
     cache_sizes = cfg.get("cache_sizes", [])
     num_runs = cfg.get("num_runs", 1)
     batch_size = cfg.get("batch_size", 1)
-    # dtype bytes
-    dtype_bytes = 4 if dtype==torch.float32 else 2
+    dtype_bytes = 4 if dtype == torch.float32 else 2
 
     benchmarks = {}
     for size_mb in cache_sizes:
-        # estimate token length per sequence
         tokens = int((size_mb*1024**2)/(batch_size*cfg["num_attention_heads"]*head_dim*dtype_bytes*2))
         seq_len = min(tokens, cfg.get("max_seq_len", tokens))
         texts = txts[:batch_size]
@@ -209,13 +208,11 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
         input_ids = inputs['input_ids'].to(device)
         mask = inputs['attention_mask'].to(device)
 
-        # memory footprint
         orig_bytes = batch_size*cfg["num_attention_heads"]*seq_len*head_dim*dtype_bytes*2
         comp_bytes = batch_size*cfg["num_attention_heads"]*seq_len*latent_dim*dtype_bytes*2
         actual_mb = orig_bytes/(1024**2)
         compression = orig_bytes/comp_bytes if comp_bytes>0 else None
 
-        # baseline timing
         base_times=[]
         for _ in range(num_runs):
             torch.cuda.synchronize()
@@ -225,7 +222,6 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
             base_times.append(time.time()-start)
         b_avg,b_std = float(np.mean(base_times)), float(np.std(base_times))
 
-        # compressed timing
         comp_times=[]
         for _ in range(num_runs):
             out0 = model(input_ids[:,:1], attention_mask=mask[:,:1], use_cache=True)
@@ -244,7 +240,6 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
             "speedup": b_avg/c_avg if c_avg>0 else None
         }
 
-    # combine all results
     results = {
         "baseline_perplexity": base_ppl,
         "compressed_perplexity": comp_ppl,
@@ -255,7 +250,6 @@ def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
 
     os.makedirs(output_dir, exist_ok=True)
     out_file = os.path.join(output_dir, "benchmark_results.json")
-    print(f"[DEBUG] Results printed to {out_file}")
     with open(out_file, 'w') as f:
         json.dump(results, f, indent=2)
 
