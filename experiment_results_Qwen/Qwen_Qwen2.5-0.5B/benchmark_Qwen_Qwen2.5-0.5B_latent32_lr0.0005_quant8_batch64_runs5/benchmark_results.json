@@ -1,0 +1,133 @@
+{
+  "baseline_perplexity": 26.284679412841797,
+  "compressed_perplexity": 64010.3515625,
+  "longbench_results": {
+    "baseline": {
+      "narrativeqa": 169.22850036621094,
+      "hotpotqa": 54.185264587402344,
+      "2wikimqa": 102.30438995361328,
+      "musique": 62.729068756103516,
+      "dureader": 402.3048095703125
+    },
+    "compressed": {
+      "narrativeqa": 10147.94140625,
+      "hotpotqa": 3811.347412109375,
+      "2wikimqa": 7796.89697265625,
+      "musique": 3112.41943359375,
+      "dureader": 24898.39453125
+    }
+  },
+  "benchmarks": {
+    "1": {
+      "actual_size_mb": 0.875,
+      "compressed_size_mb": 0.21875,
+      "compression_ratio": 4.0,
+      "times": {
+        "baseline": {
+          "avg": 0.04049768447875977,
+          "std_dev": 0.002127381492603027
+        },
+        "compressed": {
+          "avg": 0.04313511848449707,
+          "std_dev": 0.003255044374366306
+        }
+      },
+      "speedup": 0.9388564562147846
+    },
+    "10": {
+      "actual_size_mb": 9.84375,
+      "compressed_size_mb": 2.4609375,
+      "compression_ratio": 4.0,
+      "times": {
+        "baseline": {
+          "avg": 0.04062285423278809,
+          "std_dev": 7.798344810232388e-05
+        },
+        "compressed": {
+          "avg": 0.04400348663330078,
+          "std_dev": 0.002368968720038043
+        }
+      },
+      "speedup": 0.9231735333001019
+    },
+    "100": {
+      "actual_size_mb": 99.96875,
+      "compressed_size_mb": 24.9921875,
+      "compression_ratio": 4.0,
+      "times": {
+        "baseline": {
+          "avg": 0.03990626335144043,
+          "std_dev": 0.0001814985921065027
+        },
+        "compressed": {
+          "avg": 0.04182696342468262,
+          "std_dev": 0.00030535577145174373
+        }
+      },
+      "speedup": 0.9540798586371021
+    },
+    "1000": {
+      "actual_size_mb": 999.90625,
+      "compressed_size_mb": 249.9765625,
+      "compression_ratio": 4.0,
+      "times": {
+        "baseline": {
+          "avg": 0.04301118850708008,
+          "std_dev": 0.0041062058170345025
+        },
+        "compressed": {
+          "avg": 0.04154858589172363,
+          "std_dev": 0.00037497176500067943
+        }
+      },
+      "speedup": 1.0352022237090817
+    }
+  },
+  "config": {
+    "models": [
+      "Qwen/Qwen2.5-0.5B"
+    ],
+    "latent_dims": [
+      32
+    ],
+    "learning_rates": [
+      0.0005
+    ],
+    "num_epochs": [
+      5
+    ],
+    "num_train_texts": [
+      10000
+    ],
+    "seed": 42,
+    "skip_training": false,
+    "quantization_bits": 8,
+    "output_dir": "/content/learned-kv-compression/experiment_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent32_lr0.0005_quant8_batch64_runs5",
+    "eval_interval": 10000,
+    "num_eval_texts": 25,
+    "lm_batch_size": 1,
+    "buffer_size": 256,
+    "batch_size": 64,
+    "dtype": "bf16",
+    "buffer_mult": 2,
+    "gradient_accumulation_steps": 2,
+    "device": "cuda",
+    "name": "Qwen/Qwen2.5-0.5B",
+    "num_hidden_layers": 24,
+    "num_attention_heads": 14,
+    "max_seq_len": 8192,
+    "hidden_size": 896,
+    "vocab_size": 151936,
+    "model_name": "Qwen/Qwen2.5-0.5B",
+    "latent_dim": 32,
+    "num_runs": 5,
+    "cache_sizes": [
+      1,
+      10,
+      100,
+      1000
+    ],
+    "autoencoder_path": "/content/learned-kv-compression/experiment_results_Qwen/Qwen_Qwen2.5-0.5B/Qwen_Qwen2.5-0.5B_latent32_lr0.0005/autoencoders_final.pth",
+    "learning_rate": 0.0005
+  }
+}

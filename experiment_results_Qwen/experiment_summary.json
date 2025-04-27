@@ -1,11 +1,11 @@
 {
-  "total_runtime_seconds": 3389.733081102371,
+  "total_runtime_seconds": 3383.195897579193,
   "config_file": "configs/qwen25_0.5b_experiment.json",
   "models": [
     "Qwen/Qwen2.5-0.5B"
   ],
   "latent_dims": [
-    16
+    32
   ],
   "learning_rates": [
     0.0005
@@ -37,7 +37,7 @@
   "results": [
     {
       "model": "Qwen/Qwen2.5-0.5B",
-      "latent_dim": 16,
+      "latent_dim": 32,
       "learning_rate": 0.0005,
       "num_epochs": 5,
       "num_train_texts": 10000,
@@ -50,11 +50,11 @@
         100,
         1000
       ],
-      "result_dir": "/content/learned-kv-compression/experiment_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent16_lr0.0005_quant2_batch64_runs5"
+      "result_dir": "/content/learned-kv-compression/experiment_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent32_lr0.0005_quant2_batch64_runs5"
     },
     {
       "model": "Qwen/Qwen2.5-0.5B",
-      "latent_dim": 16,
+      "latent_dim": 32,
       "learning_rate": 0.0005,
       "num_epochs": 5,
       "num_train_texts": 10000,
@@ -67,11 +67,11 @@
         100,
         1000
       ],
-      "result_dir": "/content/learned-kv-compression/experiment_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent16_lr0.0005_quant4_batch64_runs5"
+      "result_dir": "/content/learned-kv-compression/experiment_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent32_lr0.0005_quant4_batch64_runs5"
     },
     {
       "model": "Qwen/Qwen2.5-0.5B",
-      "latent_dim": 16,
+      "latent_dim": 32,
       "learning_rate": 0.0005,
       "num_epochs": 5,
       "num_train_texts": 10000,
@@ -84,11 +84,11 @@
         100,
         1000
       ],
-      "result_dir": "/content/learned-kv-compression/experiment_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent16_lr0.0005_quant8_batch64_runs5"
+      "result_dir": "/content/learned-kv-compression/experiment_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent32_lr0.0005_quant8_batch64_runs5"
     },
     {
       "model": "Qwen/Qwen2.5-0.5B",
-      "latent_dim": 16,
+      "latent_dim": 32,
       "learning_rate": 0.0005,
       "num_epochs": 5,
       "num_train_texts": 10000,
@@ -101,7 +101,7 @@
         100,
         1000
       ],
-      "result_dir": "/content/learned-kv-compression/experiment_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent16_lr0.0005_quant16_batch64_runs5"
+      "result_dir": "/content/learned-kv-compression/experiment_results_Qwen/Qwen_Qwen2.5-0.5B/benchmark_Qwen_Qwen2.5-0.5B_latent32_lr0.0005_quant16_batch64_runs5"
     }
   ]
 }
