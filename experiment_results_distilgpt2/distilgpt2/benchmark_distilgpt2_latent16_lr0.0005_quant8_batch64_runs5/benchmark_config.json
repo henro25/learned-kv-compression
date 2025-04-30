@@ -1,0 +1,48 @@
+{
+  "models": [
+    "distilgpt2"
+  ],
+  "latent_dims": [
+    16,
+    32
+  ],
+  "learning_rates": [
+    0.0005
+  ],
+  "num_epochs": [
+    10
+  ],
+  "num_train_texts": [
+    50000
+  ],
+  "seed": 42,
+  "skip_training": false,
+  "quantization_bits": 8,
+  "output_dir": "/content/learned-kv-compression/experiment_results_distilgpt2/distilgpt2/benchmark_distilgpt2_latent16_lr0.0005_quant8_batch64_runs5",
+  "eval_interval": 10000,
+  "num_eval_texts": 50,
+  "lm_batch_size": 1,
+  "buffer_size": 256,
+  "batch_size": 64,
+  "dtype": "bf16",
+  "buffer_mult": 2,
+  "gradient_accumulation_steps": 2,
+  "device": "cuda",
+  "name": "distilgpt2",
+  "num_hidden_layers": 6,
+  "num_attention_heads": 12,
+  "max_seq_len": 1024,
+  "hidden_size": 768,
+  "vocab_size": 50257,
+  "cache_sizes": [
+    1,
+    10,
+    100,
+    1000
+  ],
+  "model_name": "distilgpt2",
+  "latent_dim": 16,
+  "num_runs": 5,
+  "autoencoder_path": "/content/learned-kv-compression/experiment_results_distilgpt2/distilgpt2/distilgpt2_latent16_lr0.0005/autoencoders_final.pth",
+  "learning_rate": 0.0005
+}
