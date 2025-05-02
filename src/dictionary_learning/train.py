@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Module Name: train.py
 Description: Train layer-wise Autoencoders for KV Cache Compression. This module trains one autoencoder per self-attention layer to compress the KV cache from a pretrained transformer model.
@@ -6,20 +7,20 @@ Date: 2025-03-13
 """
 
 import os
-
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import TensorDataset, DataLoader
 import argparse
 import json
 import pprint
 import random
 import numpy as np
 import tqdm
-import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
 from datasets import load_dataset
@@ -30,8 +31,7 @@ from src.utils.buffer import Buffer
 
 def load_config(config_path):
     with open(config_path, "r", encoding="utf-8") as f:
-        config = json.load(f)
-    return config
+        return json.load(f)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train layer-wise Autoencoders for KV Cache Compression")
@@ -39,55 +39,39 @@ def parse_args():
     return vars(parser.parse_args())
 
 def visualize_attention_differences(original_attn, recon_attn, layer_idx, head_idx, save_path=None):
-    """
-    Visualize the differences between original and reconstructed attention matrices.
-    """
-    original = original_attn[0].detach().cpu().float().numpy()
-    recon = recon_attn[0].detach().cpu().float().numpy()
-    diff = np.abs(original - recon)
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    im1 = axes[0].imshow(original, cmap='viridis')
-    axes[0].set_title('Original Attention')
-    axes[0].set_xlabel('Key Position')
-    axes[0].set_ylabel('Query Position')
-    plt.colorbar(im1, ax=axes[0])
-    im2 = axes[1].imshow(recon, cmap='viridis')
-    axes[1].set_title('Reconstructed Attention')
-    axes[1].set_xlabel('Key Position')
-    axes[1].set_ylabel('Query Position')
-    plt.colorbar(im2, ax=axes[1])
-    im3 = axes[2].imshow(diff, cmap='hot')
-    axes[2].set_title('Absolute Difference')
-    axes[2].set_xlabel('Key Position')
-    axes[2].set_ylabel('Query Position')
-    plt.colorbar(im3, ax=axes[2])
+    original = original_attn[0].detach().cpu().numpy()
+    recon    = recon_attn[0].detach().cpu().numpy()
+    diff     = np.abs(original - recon)
+    fig, axes = plt.subplots(1, 3, figsize=(15,5))
+    axes[0].imshow(original, cmap='viridis'); axes[0].set_title('Original')
+    axes[1].imshow(recon,    cmap='viridis'); axes[1].set_title('Reconstructed')
+    axes[2].imshow(diff,     cmap='hot');    axes[2].set_title('Absolute Difference')
     fig.suptitle(f'Layer {layer_idx}, Head {head_idx}')
     plt.tight_layout()
     if save_path:
-        plt.savefig(save_path)
-        plt.close()
+        plt.savefig(save_path); plt.close()
     else:
         plt.show()
 
 def compute_attention(q, k, v):
     batch_size, num_layers, num_heads, seq_len, head_dim = q.shape
-    q_reshaped = q.reshape(-1, num_heads, seq_len, head_dim)
-    k_reshaped = k.reshape(-1, num_heads, seq_len, head_dim)
-    v_reshaped = v.reshape(-1, num_heads, seq_len, head_dim)
-    scores = torch.matmul(q_reshaped, k_reshaped.transpose(-2, -1)) / (head_dim ** 0.5)
+    q = q.reshape(-1, num_heads, seq_len, head_dim)
+    k = k.reshape(-1, num_heads, seq_len, head_dim)
+    v = v.reshape(-1, num_heads, seq_len, head_dim)
+    scores = torch.matmul(q, k.transpose(-2, -1)) / (head_dim ** 0.5)
     attn_weights = F.softmax(scores, dim=-1)
-    output = torch.matmul(attn_weights, v_reshaped)
-    attention_output = output.reshape(batch_size, num_layers, num_heads, seq_len, head_dim)
-    attention_weights = attn_weights.reshape(batch_size, num_layers, num_heads, seq_len, seq_len)
-    return attention_output, attention_weights
+    out = torch.matmul(attn_weights, v)
+    attn_out = out.reshape(batch_size, num_layers, num_heads, seq_len, head_dim)
+    attn_w   = attn_weights.reshape(batch_size, num_layers, num_heads, seq_len, seq_len)
+    return attn_out, attn_w
 
 def main(cfg):
-    SEED = cfg["seed"]
-    torch.manual_seed(SEED)
-    np.random.seed(SEED)
-    random.seed(SEED)
-    head_dim = cfg["hidden_size"] // cfg["num_attention_heads"]
+    # reproducibility
+    torch.manual_seed(cfg["seed"])
+    np.random.seed(cfg["seed"])
+    random.seed(cfg["seed"])
 
+    # dtype setup
     if cfg.get("dtype") == "bf16":
         cfg["dtype"] = torch.bfloat16
     elif cfg.get("dtype") in ("fp16","f16"):
@@ -99,6 +83,7 @@ def main(cfg):
     os.makedirs(cfg["output_dir"], exist_ok=True)
     os.makedirs(os.path.join(cfg["output_dir"], "attention_viz"), exist_ok=True)
 
+    # load tokenizer & model
     tokenizer = AutoTokenizer.from_pretrained(cfg["name"])
     model = AutoModelForCausalLM.from_pretrained(
         cfg["name"],
@@ -110,43 +95,77 @@ def main(cfg):
         use_cache=True
     )
     if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token or tokenizer.add_special_tokens({'pad_token':'[PAD]'})
+        tokenizer.pad_token = tokenizer.eos_token
         model.resize_token_embeddings(len(tokenizer))
     model.eval()
 
-    autoencoders = nn.ModuleList()
-    for _ in range(cfg["num_hidden_layers"]):
-        ae = Autoencoder(input_dim=head_dim, latent_dim=cfg["latent_dim"], dtype=cfg["dtype"])
-        autoencoders.append(ae.to(cfg["device"]))
+    # build one autoencoder per layer
+    head_dim = cfg["hidden_size"] // cfg["num_attention_heads"]
+    autoencoders = nn.ModuleList([
+        Autoencoder(input_dim=head_dim, latent_dim=cfg["latent_dim"], dtype=cfg["dtype"]).to(cfg["device"])
+        for _ in range(cfg["num_hidden_layers"])
+    ])
+
+    # COMPILE each autoencoder for speed (PyTorch 2.0+)
+    for i, ae in enumerate(autoencoders):
+        autoencoders[i] = torch.compile(ae)
 
     writer = SummaryWriter(log_dir=f'runs/{cfg["name"]}_{cfg["latent_dim"]}')
 
-    wiki_dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
+    # prepare text pools
+    wiki = load_dataset("wikitext", "wikitext-103-raw-v1")["train"]["text"]
     longbench_subsets = ['narrativeqa','hotpotqa','2wikimqa','musique','dureader']
     longbench_texts = []
     for subset in longbench_subsets:
         try:
-            dataset = load_dataset("THUDM/LongBench", subset)
-            longbench_texts.extend(dataset["test"]["input"])
+            longbench_texts.extend(load_dataset("THUDM/LongBench", subset)["test"]["input"])
         except:
             pass
-
-    wiki_train = [t for t in wiki_dataset["train"]["text"] if t.strip()]
+    wiki = [t for t in wiki if t.strip()]
     num_wiki = int(cfg["num_train_texts"] * 0.7)
-    num_long = cfg["num_train_texts"] - num_wiki
-    wiki_train = random.sample(wiki_train, min(num_wiki, len(wiki_train)))
-    long_train = random.sample([t for t in longbench_texts if t.strip()], min(num_long, len(longbench_texts)))
+    wiki_train = random.sample(wiki, min(num_wiki, len(wiki)))
+    long_train = random.sample([t for t in longbench_texts if t.strip()],
+                               min(cfg["num_train_texts"]-len(wiki_train), len(longbench_texts)))
     texts_train = wiki_train + long_train
     random.shuffle(texts_train)
-    texts_test = [t for t in wiki_dataset["test"]["text"] if t.strip()][:cfg["num_eval_texts"]]
-    texts_test.extend(longbench_texts[cfg["num_train_texts"]:cfg["num_train_texts"]+cfg["num_eval_texts"]])
+    texts_test = [t for t in load_dataset("wikitext", "wikitext-103-raw-v1")["test"]["text"] if t.strip()][:cfg["num_eval_texts"]]
+    texts_test += longbench_texts[cfg["num_train_texts"]:
+                                  cfg["num_train_texts"]+cfg["num_eval_texts"]]
 
+    # build buffers
     train_buffer = Buffer(cfg, model, tokenizer, texts_train)
     eval_buffer  = Buffer(cfg, model, tokenizer, texts_test)
 
-    # Compute number of updates per epoch
+    # compute batches per epoch
+    # we'll precompute exactly that many batches
     batches_per_epoch = len(texts_train) // cfg["batch_size"]
-    # Setup AdamW optimizer with weight decay and cosine scheduler with warmup
+
+    # --- PRECOMPUTE all training KV/Q outside the inner loop ---
+    model.eval()
+    with torch.no_grad():
+        train_k_list, train_v_list, train_q_list = [], [], []
+        for _ in range(batches_per_epoch):
+            (keys, values), queries = train_buffer.next()
+            train_k_list.append(keys)
+            train_v_list.append(values)
+            train_q_list.append(queries)
+        train_keys    = torch.cat(train_k_list,   dim=0)
+        train_values  = torch.cat(train_v_list,   dim=0)
+        train_queries = torch.cat(train_q_list,   dim=0)
+    del train_buffer
+
+    train_ds = TensorDataset(train_keys, train_values, train_queries)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=cfg["batch_size"],
+        shuffle=True,
+        num_workers=cfg.get("num_workers", 4),
+        pin_memory=True
+    )
+    # recompute for scheduler
+    batches_per_epoch = len(train_loader)
+
+    # optimizer & scheduler
     total_steps = (batches_per_epoch // cfg["gradient_accumulation_steps"]) * cfg["num_epochs"]
     warmup_steps = int(cfg.get("warmup_ratio", 0.1) * total_steps)
     optimizer = AdamW(
@@ -161,34 +180,56 @@ def main(cfg):
         num_training_steps=total_steps
     )
 
+    # logging setup
+    log_interval = cfg.get("log_interval", 50)
+    global_step = 0
+
+    # placeholders for reconstructions
+    k_recon, v_recon = None, None
+
+    # --- TRAIN ---
     for epoch in range(cfg["num_epochs"]):
         for ae in autoencoders:
             ae.train()
-        epoch_loss = 0.0
-        for i in tqdm.trange(batches_per_epoch, desc=f"Epoch {epoch+1}/{cfg['num_epochs']}"):
-            (keys, values), queries = train_buffer.next()
+
+        epoch_loss_total = 0.0
+        running_loss     = 0.0
+
+        for i, (keys, values, queries) in enumerate(tqdm.trange(
+                batches_per_epoch, desc=f"Epoch {epoch+1}/{cfg['num_epochs']}")):
+            # move to device
+            keys    = keys.to(cfg["device"])
+            values  = values.to(cfg["device"])
+            queries = queries.to(cfg["device"])
+
             B, L, H, S, D = keys.shape
-            k_recon = torch.zeros_like(keys)
-            v_recon = torch.zeros_like(values)
+
+            # allocate or clear recon buffers
+            if k_recon is None or k_recon.shape != keys.shape:
+                k_recon = torch.empty_like(keys)
+                v_recon = torch.empty_like(values)
+            else:
+                k_recon.zero_()
+                v_recon.zero_()
+
+            # run each layer's AE
             for l in range(L):
-                k_l = keys[:,l].reshape(-1, D)
-                v_l = values[:,l].reshape(-1, D)
+                k_l = keys[:, l].reshape(-1, D)
+                v_l = values[:, l].reshape(-1, D)
                 k_flat, _ = autoencoders[l](k_l)
                 v_flat, _ = autoencoders[l](v_l)
-                k_rec = k_flat.reshape(B, H, S, D)
-                v_rec = v_flat.reshape(B, H, S, D)
-                k_recon[:,l] = k_rec
-                v_recon[:,l] = v_rec
+                k_recon[:, l] = k_flat.reshape(B, H, S, D)
+                v_recon[:, l] = v_flat.reshape(B, H, S, D)
 
-            orig_attn, _  = compute_attention(queries, keys, values)
+            # losses
+            orig_attn, _ = compute_attention(queries, keys, values)
             recon_attn, _ = compute_attention(queries, k_recon, v_recon)
-            attn_loss = F.mse_loss(recon_attn, orig_attn)
             kv_loss = F.mse_loss(k_recon, keys) + F.mse_loss(v_recon, values)
-            loss = (0.0 * attn_loss + 1.0 * kv_loss) / cfg["gradient_accumulation_steps"]
-            
+            loss = kv_loss / cfg["gradient_accumulation_steps"]
             loss.backward()
+
+            # gradient accumulation step
             if (i+1) % cfg["gradient_accumulation_steps"] == 0 or (i+1) == batches_per_epoch:
-                # Clip gradients before stepping
                 torch.nn.utils.clip_grad_norm_(
                     [p for ae in autoencoders for p in ae.parameters() if p.grad is not None],
                     max_norm=cfg.get("max_grad_norm", 1.0)
@@ -196,23 +237,29 @@ def main(cfg):
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
-                torch.cuda.empty_cache()
-            epoch_loss += loss.item() * B * cfg["gradient_accumulation_steps"]
-            writer.add_scalar('Loss/train', loss.item(), epoch*batches_per_epoch + i)
 
-        epoch_loss /= (batches_per_epoch * cfg["batch_size"])
+            # logging
+            epoch_loss_total += loss.item() * cfg["batch_size"] * cfg["gradient_accumulation_steps"]
+            running_loss     += loss.item()
+            global_step      += 1
+
+            if global_step % log_interval == 0:
+                writer.add_scalar('Loss/train', running_loss / log_interval, global_step)
+                running_loss = 0.0
+
+        # end of epoch
+        epoch_loss = epoch_loss_total / (batches_per_epoch * cfg["batch_size"])
         print(f"Epoch {epoch+1}, Loss: {epoch_loss:.4f}")
-        scheduler.step()
-        
-        # Save checkpoint every 5 epochs
+
+        # periodic checkpoint
         if (epoch+1) % 5 == 0:
             ckpt = {f"layer_{i}": ae.state_dict() for i, ae in enumerate(autoencoders)}
             path = os.path.join(cfg["output_dir"], f"autoencoders_epoch_{epoch+1}.pth")
             torch.save(ckpt, path)
             print(f"Saved {path}")
 
+        # periodic eval
         if (epoch+1) % cfg["eval_interval"] == 0:
-            # Periodic evaluation (no best-model checkpoint saved)
             for ae in autoencoders:
                 ae.eval()
             eval_losses = []
@@ -226,21 +273,20 @@ def main(cfg):
                     v_l = values[:,l].reshape(-1, D)
                     k_flat, _ = autoencoders[l](k_l)
                     v_flat, _ = autoencoders[l](v_l)
-                    k_rec = k_flat.reshape(B, H, S, D)
-                    v_rec = v_flat.reshape(B, H, S, D)
-                    k_recon[:,l] = k_rec
-                    v_recon[:,l] = v_rec
+                    k_recon[:,l] = k_flat.reshape(B, H, S, D)
+                    v_recon[:,l] = v_flat.reshape(B, H, S, D)
                 orig_attn, _  = compute_attention(queries, keys, values)
                 recon_attn, _ = compute_attention(queries, k_recon, v_recon)
                 eval_losses.append(F.mse_loss(recon_attn, orig_attn).item())
             avg_eval = np.mean(eval_losses)
             writer.add_scalar('Loss/eval', avg_eval, epoch+1)
 
-    # Save final checkpoint (one dict with per-layer state) and log its path
+    # final checkpoint
     final_ckpt = {f"layer_{i}": ae.state_dict() for i, ae in enumerate(autoencoders)}
     final_path = os.path.join(cfg["output_dir"], "autoencoders_final.pth")
     torch.save(final_ckpt, final_path)
     print(f"Saved final autoencoder checkpoint to: {final_path}")
+
     writer.close()
     print("Training complete!")
 
