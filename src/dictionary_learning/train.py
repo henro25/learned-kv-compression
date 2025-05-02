@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 import argparse
 import json
 import pprint
@@ -28,6 +28,28 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, get_cosine_schedul
 from torch.optim import AdamW
 from src.models.autoencoder import Autoencoder
 from src.utils.buffer import Buffer
+
+class MMapDataset(Dataset):
+    """A torch Dataset that reads K/V/Q from disk via np.memmap."""
+    def __init__(self, key_path, value_path, query_path, shape, dtype, device):
+        self.shape = shape  # (N, L, H, S, D)
+        self.device = device
+        self.dtype = dtype
+
+        # Load the three memmaps in read-only mode:
+        self.keys_mmap    = np.memmap(key_path,   mode='r', dtype=np.float32, shape=shape)
+        self.values_mmap  = np.memmap(value_path, mode='r', dtype=np.float32, shape=shape)
+        self.queries_mmap = np.memmap(query_path, mode='r', dtype=np.float32, shape=shape)
+
+    def __len__(self):
+        return self.shape[0]
+
+    def __getitem__(self, idx):
+        # Grab the slice from each memmap, wrap in torch, send to device
+        k = torch.from_numpy(self.keys_mmap[idx]).to(self.device, dtype=self.dtype)
+        v = torch.from_numpy(self.values_mmap[idx]).to(self.device, dtype=self.dtype)
+        q = torch.from_numpy(self.queries_mmap[idx]).to(self.device, dtype=self.dtype)
+        return k, v, q
 
 def load_config(config_path):
     with open(config_path, "r", encoding="utf-8") as f:
@@ -73,12 +95,13 @@ def main(cfg):
 
     # dtype setup
     if cfg.get("dtype") == "bf16":
-        cfg["dtype"] = torch.bfloat16
+        dtype = torch.bfloat16
     elif cfg.get("dtype") in ("fp16","f16"):
-        cfg["dtype"] = torch.float16
+        dtype = torch.float16
     else:
-        cfg["dtype"] = torch.float32
-    print(f"Using dtype: {cfg['dtype']}")
+        dtype = torch.float32
+    cfg["dtype"] = dtype
+    print(f"Using dtype: {dtype}")
 
     os.makedirs(cfg["output_dir"], exist_ok=True)
     os.makedirs(os.path.join(cfg["output_dir"], "attention_viz"), exist_ok=True)
@@ -88,7 +111,7 @@ def main(cfg):
     model = AutoModelForCausalLM.from_pretrained(
         cfg["name"],
         trust_remote_code=(cfg["name"].startswith("Qwen")),
-        torch_dtype=cfg["dtype"],
+        torch_dtype=dtype,
         device_map={"": cfg["device"]},
         output_hidden_states=True,
         output_attentions=True,
@@ -102,17 +125,16 @@ def main(cfg):
     # build one autoencoder per layer
     head_dim = cfg["hidden_size"] // cfg["num_attention_heads"]
     autoencoders = nn.ModuleList([
-        Autoencoder(input_dim=head_dim, latent_dim=cfg["latent_dim"], dtype=cfg["dtype"]).to(cfg["device"])
+        Autoencoder(input_dim=head_dim, latent_dim=cfg["latent_dim"], dtype=dtype).to(cfg["device"])
         for _ in range(cfg["num_hidden_layers"])
     ])
-
-    # COMPILE each autoencoder for speed (PyTorch 2.0+)
+    # COMPILE each for speed
     for i, ae in enumerate(autoencoders):
         autoencoders[i] = torch.compile(ae)
 
     writer = SummaryWriter(log_dir=f'runs/{cfg["name"]}_{cfg["latent_dim"]}')
 
-    # prepare text pools
+    # prepare text pools (unchanged) …
     wiki = load_dataset("wikitext", "wikitext-103-raw-v1")["train"]["text"]
     longbench_subsets = ['narrativeqa','hotpotqa','2wikimqa','musique','dureader']
     longbench_texts = []
@@ -140,29 +162,52 @@ def main(cfg):
     batches_per_epoch = len(texts_train) // cfg["batch_size"]
 
     #
-    # ─── PRECOMPUTE ALL KV/Q ON CPU ───────────────────────────────────────────
+    # ─── PRECOMPUTE ALL KV/Q TO DISK ───────────────────────────────────────────
     #
     model.eval()
+    # decide full cache size:
+    N = batches_per_epoch * cfg["batch_size"]
+    L = cfg["num_hidden_layers"]
+    H = cfg["num_attention_heads"]
+    S = train_buffer.buffer_seq_len
+    D = head_dim
+
+    # file paths
+    key_path = os.path.join(cfg["output_dir"], "keys.dat")
+    val_path = os.path.join(cfg["output_dir"], "values.dat")
+    qry_path = os.path.join(cfg["output_dir"], "queries.dat")
+
+    # create memmaps (float32 on disk)
+    keys_mmap    = np.memmap(key_path, mode='w+', dtype=np.float32, shape=(N, L, H, S, D))
+    values_mmap  = np.memmap(val_path, mode='w+', dtype=np.float32, shape=(N, L, H, S, D))
+    queries_mmap = np.memmap(qry_path, mode='w+', dtype=np.float32, shape=(N, L, H, S, D))
+
+    pos = 0
     with torch.no_grad():
-        cpu_k, cpu_v, cpu_q = [], [], []
         for _ in range(batches_per_epoch):
             (keys, values), queries = train_buffer.next()
-            # immediately move to CPU to avoid GPU OOM
-            cpu_k.append(keys.cpu())
-            cpu_v.append(values.cpu())
-            cpu_q.append(queries.cpu())
+            bsz = keys.size(0)
 
-        train_keys    = torch.cat(cpu_k,   dim=0)
-        train_values  = torch.cat(cpu_v,   dim=0)
-        train_queries = torch.cat(cpu_q,   dim=0)
+            # copy into memmap
+            keys_mmap   [pos:pos+bsz] = keys.cpu().numpy()
+            values_mmap [pos:pos+bsz] = values.cpu().numpy()
+            queries_mmap[pos:pos+bsz] = queries.cpu().numpy()
+            pos += bsz
 
-    # free up buffer & flush any leftover GPU memory
+    # flush and delete to free host memory
+    del keys_mmap, values_mmap, queries_mmap
     del train_buffer
     torch.cuda.empty_cache()
 
-    train_ds = TensorDataset(train_keys, train_values, train_queries)
+    # ─── BUILD DATASET & DATALOADER FROM DISK ─────────────────────────────────
+    ds = MMapDataset(
+        key_path, val_path, qry_path,
+        shape=(N, L, H, S, D),
+        dtype=dtype,
+        device=cfg["device"]
+    )
     train_loader = DataLoader(
-        train_ds,
+        ds,
         batch_size=cfg["batch_size"],
         shuffle=True,
         num_workers=cfg.get("num_workers", 4),
@@ -170,7 +215,7 @@ def main(cfg):
     )
     batches_per_epoch = len(train_loader)
 
-    # optimizer & scheduler
+    # optimizer & scheduler (unchanged) …
     total_steps  = (batches_per_epoch // cfg["gradient_accumulation_steps"]) * cfg["num_epochs"]
     warmup_steps = int(cfg.get("warmup_ratio", 0.1) * total_steps)
     optimizer = AdamW(
@@ -190,7 +235,7 @@ def main(cfg):
     global_step = 0
 
     # placeholders for reconstructions
-    k_recon, v_recon = None, None
+    k_recon = v_recon = None
 
     # ─── TRAINING LOOP ───────────────────────────────────────────────────────
     for epoch in range(cfg["num_epochs"]):
@@ -254,7 +299,7 @@ def main(cfg):
         epoch_loss = epoch_loss_total / (batches_per_epoch * cfg["batch_size"])
         print(f"Epoch {epoch+1}, Loss: {epoch_loss:.4f}")
 
-        # checkpoints & eval same as before...
+        # checkpoints & eval (unchanged) …
         if (epoch+1) % 5 == 0:
             ckpt = {f"layer_{i}": ae.state_dict() for i, ae in enumerate(autoencoders)}
             path = os.path.join(cfg["output_dir"], f"autoencoders_epoch_{epoch+1}.pth")
@@ -262,8 +307,7 @@ def main(cfg):
             print(f"Saved {path}")
 
         if (epoch+1) % cfg["eval_interval"] == 0:
-            # ... your existing eval_buffer-based eval ...
-            pass
+            pass  # your existing eval_buffer-based eval
 
     # final save
     final_ckpt = {f"layer_{i}": ae.state_dict() for i, ae in enumerate(autoencoders)}
