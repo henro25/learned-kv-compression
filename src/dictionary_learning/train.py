@@ -35,7 +35,10 @@ def load_config(config_path):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train layer-wise Autoencoders for KV Cache Compression")
-    parser.add_argument("--config", type=str, required=True, help="Path to config file")
+    parser.add_argument(
+        "--config", type=str, 
+        default="src/configs/default_config.json",
+        help="Path to config file")
     return vars(parser.parse_args())
 
 def visualize_attention_differences(original_attn, recon_attn, layer_idx, head_idx, save_path=None):
