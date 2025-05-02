@@ -1,5 +1,7 @@
 venv/
 runs/
 
-*.pth
+test_results_Qwen/*.pth
+test_results_distilgpt2/*.pth
+experiment_results_Qwen/*.pth
 *.pyc
