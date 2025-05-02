@@ -8,7 +8,7 @@
     "output_dir": "experiment_results_Qwen",
 
     "eval_interval": 10000,
-    "num_eval_texts": 25,
+    "num_eval_texts": 10,
 
     "lm_batch_size": 1,
     "buffer_size": 256,

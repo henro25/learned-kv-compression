@@ -2,10 +2,11 @@
 """
 benchmark.py
 
-Run perplexity + cache-size + timing benchmarks for baseline vs. AE-compressed KV caches.
+Run perplexity + cache-size + timing benchmarks for baseline vs. AE-compressed KV caches,
+and include a few example continuations in the output JSON.
 """
 
-# ─── suppress noisy backend logs ────────────────────────────────────────────────
+# ─── Suppress noisy logs ─────────────────────────────────────────────────────────
 import os, warnings, logging
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["ABSL_MIN_LOG_LEVEL"]  = "3"
@@ -18,217 +19,243 @@ absl_log.set_stderrthreshold("fatal")
 from transformers.utils import logging as hf_logging
 hf_logging.set_verbosity_error()
 
-# ─── standard imports ───────────────────────────────────────────────────────────
-import json, time, argparse
+# ─── Standard imports ───────────────────────────────────────────────────────────
+import json, argparse, time
 import numpy as np
-import torch
-import torch.nn.functional as F
+import torch, torch.nn.functional as F
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.cache_utils import DynamicCache
 from datasets import load_dataset
 from src.models.autoencoder import Autoencoder
 
-# ─── helper: quantization -------------------------------------------------------
+# ─── Helpers ────────────────────────────────────────────────────────────────────
+
 def quantize_tensor(x: torch.Tensor, bits: int):
     scale = 2 ** (bits - 1) - 1
-    max_val = x.abs().amax()
-    if max_val == 0:
-        return x
-    x_q = torch.round(torch.clamp(x / max_val * scale, -scale, scale)) / scale
-    return x_q * max_val
+    m = x.abs().amax()
+    if m == 0: return x
+    x_q = torch.round(torch.clamp(x / m * scale, -scale, scale)) / scale
+    return x_q * m
 
-# ─── helper: robust config resolution (GPT-2, Qwen, etc) ───────────────────────
 def resolve_dims(cfg):
-    # layers
     if hasattr(cfg, "num_hidden_layers"):
         n_layers = cfg.num_hidden_layers
     elif hasattr(cfg, "n_layer"):
         n_layers = cfg.n_layer
     else:
-        raise ValueError(f"Cannot find number of layers in config {cfg}")
-    # hidden size
+        raise ValueError("Missing layer count in config")
     if hasattr(cfg, "hidden_size"):
         hidden = cfg.hidden_size
     elif hasattr(cfg, "n_embd"):
         hidden = cfg.n_embd
     else:
-        raise ValueError(f"Cannot find hidden_size in config {cfg}")
-    # heads
+        raise ValueError("Missing hidden_size in config")
     if hasattr(cfg, "num_attention_heads"):
         heads = cfg.num_attention_heads
     elif hasattr(cfg, "n_head"):
         heads = cfg.n_head
     else:
-        raise ValueError(f"Cannot find number of heads in config {cfg}")
-    head_dim = hidden // heads
-    return n_layers, heads, head_dim
+        raise ValueError("Missing num_attention_heads in config")
+    return n_layers, heads, hidden // heads
 
-# ─── compress & reconstruct KV cache ------------------------------------------
-def compress_kv_cache(past_key_values, autoencoders, quantization_bits=None):
-    reconstructed = []
-    for (k, v), ae in zip(past_key_values, autoencoders):
-        B, H, S, D = k.shape
+def compress_kv_cache(past, aes, bits=None):
+    rebuilt = []
+    for (k, v), ae in zip(past, aes):
+        B,H,S,D = k.shape
         k_flat = k.contiguous().view(-1, D)
         v_flat = v.contiguous().view(-1, D)
         with torch.no_grad():
             k_lat = ae.encoder(k_flat)
             v_lat = ae.encoder(v_flat)
-            if quantization_bits is not None:
-                k_lat = quantize_tensor(k_lat, quantization_bits)
-                v_lat = quantize_tensor(v_lat, quantization_bits)
-            k_rec = ae.decoder(k_lat).view(B, H, S, D)
-            v_rec = ae.decoder(v_lat).view(B, H, S, D)
-        reconstructed.append((k_rec, v_rec))
-    return DynamicCache.from_legacy_cache(past_key_values=tuple(reconstructed))
+            if bits is not None:
+                k_lat = quantize_tensor(k_lat, bits)
+                v_lat = quantize_tensor(v_lat, bits)
+            k_rec = ae.decoder(k_lat).view(B,H,S,D)
+            v_rec = ae.decoder(v_lat).view(B,H,S,D)
+        rebuilt.append((k_rec, v_rec))
+    return DynamicCache.from_legacy_cache(tuple(rebuilt))
 
-# ─── perplexity on raw text ----------------------------------------------------
-def calculate_perplexity(model, tokenizer, texts, max_length=1024, desc="Calculating PPL"):
-    model.eval()
-    total_loss = 0.0
-    total_tokens = 0
-    loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+# Prompt‐only cache builder
+def prompt_cache(tokenizer, model, prompt: str):
+    enc = tokenizer(prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():
-        for text in tqdm(texts, desc=desc):
-            inp = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_length).to(model.device)
+        out = model(**enc, use_cache=True)
+    return enc, out.past_key_values
+
+# One‐step generation + top‐k sampling, updating mask & position_ids
+def continue_text(tokenizer, model, enc, past, gen_len=20, top_k=50, temp=1.0):
+    ids   = enc.input_ids.clone()
+    pos   = ids.size(1)
+    last  = ids[:, -1:]
+
+    for _ in range(gen_len):
+        mask     = torch.ones_like(last)
+        pos_ids  = torch.tensor([[pos]], device=model.device)
+        with torch.no_grad():
+            out = model(
+                input_ids=last,
+                attention_mask=mask,
+                position_ids=pos_ids,
+                past_key_values=past,
+                use_cache=True
+            )
+        logits = out.logits[:, -1, :] / temp
+        # top-k filter
+        vals, idx = torch.topk(logits, top_k, dim=-1)
+        filt = logits.new_full(logits.shape, float("-inf"))
+        filt.scatter_(-1, idx, vals)
+        probs = torch.softmax(filt, dim=-1)
+        nxt   = torch.multinomial(probs, num_samples=1)
+        ids   = torch.cat([ids, nxt], dim=-1)
+        last  = nxt
+        past  = out.past_key_values
+        pos  += 1
+
+    return tokenizer.decode(ids[0], skip_special_tokens=True)
+
+# ─── Perplexity routines ────────────────────────────────────────────────────────
+
+def calculate_perplexity(model, tok, texts, max_len, desc):
+    model.eval()
+    loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+    tot_loss, tot_tok = 0.0, 0
+    with torch.no_grad():
+        for t in tqdm(texts, desc=desc):
+            inp = tok(t, return_tensors="pt", truncation=True, max_length=max_len).to(model.device)
             out = model(**inp)
             logits = out.logits[..., :-1, :].contiguous()
             labels = inp.input_ids[..., 1:].contiguous()
             mask   = inp.attention_mask[..., 1:].contiguous()
             loss   = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
-            total_loss  += (loss * mask.view(-1)).sum().item()
-            total_tokens += mask.view(-1).sum().item()
-    return torch.exp(torch.tensor(total_loss / total_tokens)).item()
+            tot_loss += (loss * mask.view(-1)).sum().item()
+            tot_tok  += mask.view(-1).sum().item()
+    return torch.exp(torch.tensor(tot_loss / tot_tok)).item()
 
-# ─── evaluate baseline with KV quantization only --------------------------------
-def evaluate_with_kv_quant(model, tokenizer, texts, max_length=1024, quantization_bits=None):
+def evaluate_with_kv_quant(model, tok, texts, max_len, bits=None):
     model.eval()
-    total_loss = 0.0
-    total_tokens = 0
     loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+    tot_loss, tot_tok = 0.0, 0
     with torch.no_grad():
-        for text in tqdm(texts, desc="Eval quant KV baseline"):
-            inp = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_length).to(model.device)
-            ids  = inp.input_ids
-            mask = inp.attention_mask
+        for t in tqdm(texts, desc="Eval quantized KV baseline"):
+            inp = tok(t, return_tensors="pt", truncation=True, max_length=max_len).to(model.device)
+            ids, mask = inp.input_ids, inp.attention_mask
             past = None
-            for t in range(ids.size(1) - 1):
-                if not mask[0, t+1]:
-                    continue
-                out = model(input_ids=ids[:, t:t+1], attention_mask=mask[:, t:t+1],
+            for i in range(ids.size(1)-1):
+                if not mask[0,i+1]: continue
+                out = model(ids[:,i:i+1], attention_mask=mask[:,i:i+1],
                             past_key_values=past, use_cache=True)
+                # optionally quantize raw KV
                 new_past = []
-                for kk, vv in out.past_key_values:
-                    kk = quantize_tensor(kk, quantization_bits) if quantization_bits is not None else kk
-                    vv = quantize_tensor(vv, quantization_bits) if quantization_bits is not None else vv
-                    new_past.append((kk, vv))
-                past = DynamicCache.from_legacy_cache(past_key_values=tuple(new_past))
-                logits = out.logits[..., -1, :]
-                loss   = loss_fct(logits, ids[:, t+1])
-                total_loss  += loss.item()
-                total_tokens += 1
-    return torch.exp(torch.tensor(total_loss / total_tokens)).item()
+                for kk,vv in out.past_key_values:
+                    kk = quantize_tensor(kk, bits) if bits is not None else kk
+                    vv = quantize_tensor(vv, bits) if bits is not None else vv
+                    new_past.append((kk,vv))
+                past = DynamicCache.from_legacy_cache(tuple(new_past))
+                loss = loss_fct(out.logits[..., -1, :], ids[:,i+1])
+                tot_loss += loss.item()
+                tot_tok  += 1
+    return torch.exp(torch.tensor(tot_loss / tot_tok)).item()
 
-# ─── evaluate with full AE compression on the fly ------------------------------
-def evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, max_length=1024, quantization_bits=None):
+def evaluate_with_compressed_cache(model, tok, aes, texts, max_len, bits=None):
     model.eval()
-    total_loss = 0.0
-    total_tokens = 0
     loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+    tot_loss, tot_tok = 0.0, 0
     with torch.no_grad():
-        for text in tqdm(texts, desc="Eval AE-compressed"):
-            inp = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_length).to(model.device)
-            ids  = inp.input_ids
-            mask = inp.attention_mask
+        for t in tqdm(texts, desc="Eval AE-compressed KV"):
+            inp = tok(t, return_tensors="pt", truncation=True, max_length=max_len).to(model.device)
+            ids, mask = inp.input_ids, inp.attention_mask
             past = None
-            for t in range(ids.size(1) - 1):
-                if not mask[0, t+1]:
-                    continue
-                out = model(input_ids=ids[:, t:t+1], attention_mask=mask[:, t:t+1],
+            for i in range(ids.size(1)-1):
+                if not mask[0,i+1]: continue
+                out = model(ids[:,i:i+1], attention_mask=mask[:,i:i+1],
                             past_key_values=past, use_cache=True)
-                past = compress_kv_cache(out.past_key_values, autoencoders, quantization_bits)
-                logits = out.logits[..., -1, :]
-                loss   = loss_fct(logits, ids[:, t+1])
-                total_loss  += loss.item()
-                total_tokens += 1
-    return torch.exp(torch.tensor(total_loss / total_tokens)).item()
+                past = compress_kv_cache(out.past_key_values, aes, bits)
+                loss = loss_fct(out.logits[..., -1, :], ids[:,i+1])
+                tot_loss += loss.item()
+                tot_tok  += 1
+    return torch.exp(torch.tensor(tot_loss / tot_tok)).item()
 
-# ─── evaluate LongBench subsets ------------------------------------------------
-def evaluate_longbench(model, tokenizer, autoencoders, cfg, quantization_bits=None):
+def evaluate_longbench(model, tok, aes, cfg, bits=None):
     subsets = ['narrativeqa','hotpotqa','2wikimqa','musique','dureader']
-    results = {"baseline": {}, "compressed": {}}
-    num_eval = cfg.get("num_eval_texts")
+    res = {"baseline":{}, "compressed":{}}
+    n_eval = cfg.get("num_eval_texts")
     for s in subsets:
         data = load_dataset("THUDM/LongBench", s, trust_remote_code=True)["test"]["input"]
-        texts = [t for t in data if t.strip()][:num_eval or None]
-        results["baseline"][s]   = calculate_perplexity(model, tokenizer, texts, cfg["max_seq_len"], f"PPL {s}")
-        results["compressed"][s] = evaluate_with_compressed_cache(model, tokenizer,
-                                       autoencoders, texts, cfg["max_seq_len"], quantization_bits)
-    return results
+        texts = [x for x in data if x.strip()][:n_eval or None]
+        res["baseline"][s]   = calculate_perplexity(model, tok, texts, cfg["max_seq_len"], f"PPL {s}")
+        res["compressed"][s] = evaluate_with_compressed_cache(model, tok, aes, texts, cfg["max_seq_len"], bits)
+    return res
 
-# ─── main benchmarking function -----------------------------------------------
-def run_benchmark(model_name, autoencoder_path, latent_dim, output_dir, cfg):
+# ─── Main runner ───────────────────────────────────────────────────────────────
+def run_benchmark(model_name, ae_path, lat_dim, out_dir, cfg):
     device = torch.device(cfg.get("device","cuda"))
-    dtype_str = cfg.get("dtype","fp32")
-    dtype = torch.bfloat16 if dtype_str=="bf16" else torch.float16 if dtype_str in ("fp16","f16") else torch.float32
+    dtype = {"fp32":torch.float32,"fp16":torch.float16,"bf16":torch.bfloat16}[cfg.get("dtype","fp32")]
 
-    # load tokenizer & model
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token; tokenizer.pad_token_id = tokenizer.eos_token_id
+    # load model
+    tok = AutoTokenizer.from_pretrained(model_name)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token; tok.pad_token_id = tok.eos_token_id
     model = AutoModelForCausalLM.from_pretrained(
         model_name, torch_dtype=dtype, device_map={"":device}, use_cache=True
     )
-    model.config.pad_token_id = tokenizer.pad_token_id
+    model.config.pad_token_id = tok.pad_token_id
 
-    # resolve dims
-    n_layers, n_heads, head_dim = resolve_dims(model.config)
-
-    # load AE checkpoints
-    ckpt = torch.load(autoencoder_path) if os.path.exists(autoencoder_path) else None
-    autoencoders = []
+    # resolve dims & load AEs
+    n_layers, _, head_dim = resolve_dims(model.config)
+    ckpt = torch.load(ae_path, map_location=device) if os.path.exists(ae_path) else None
+    aes = []
     for i in range(n_layers):
-        ae = Autoencoder(input_dim=head_dim, latent_dim=latent_dim, dtype=dtype).to(device)
-        if ckpt:
-            ae.load_state_dict(ckpt[f"layer_{i}"])
-        ae.eval(); autoencoders.append(ae)
+        ae = Autoencoder(input_dim=head_dim, latent_dim=lat_dim, dtype=dtype).to(device)
+        if ckpt: ae.load_state_dict(ckpt[f"layer_{i}"])
+        ae.eval(); aes.append(ae)
 
-    # prepare texts
-    ds = load_dataset("wikitext","wikitext-103-raw-v1")
-    texts = [t for t in ds["test"]["text"] if t.strip()]
+    # prepare dataset
+    ds = load_dataset("wikitext","wikitext-103-raw-v1")["test"]["text"]
+    texts = [x for x in ds if x.strip()]
     if cfg.get("num_eval_texts"):
         texts = texts[:cfg["num_eval_texts"]]
 
-    # loop over quantization bits
+    # perplexities per bit
     bits_list = cfg.get("quantization_bits", [None])
-    summary = {}
+    ppl_summary = {}
     for bits in bits_list:
-        b_ppl = evaluate_with_kv_quant(model, tokenizer, texts, cfg["max_seq_len"], bits)
-        c_ppl = evaluate_with_compressed_cache(model, tokenizer, autoencoders, texts, cfg["max_seq_len"], bits)
-        summary[str(bits)] = {
-            "baseline_perplexity": b_ppl,
-            "compressed_perplexity": c_ppl
-        }
+        b = evaluate_with_kv_quant(model, tok, texts, cfg["max_seq_len"], bits)
+        c = evaluate_with_compressed_cache(model, tok, aes, texts, cfg["max_seq_len"], bits)
+        ppl_summary[str(bits)] = {"baseline_ppl": b, "compressed_ppl": c}
 
-    # optional LongBench
-    longbench = evaluate_longbench(model, tokenizer, autoencoders, cfg, bits_list[0] if bits_list else None)
+    # longbench
+    longbench = evaluate_longbench(model, tok, aes, cfg, bits_list[0])
 
-    # write results
-    os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, "benchmark_results.json")
-    with open(out_path, "w") as f:
+    # --- new: example continuations ---
+    gen_len = cfg.get("gen_len", 20)
+    examples = []
+    for prompt in texts[:5]:
+        enc, cache = prompt_cache(tok, model, prompt)
+        base_out = continue_text(tok, model, enc, cache, gen_len=gen_len)
+        comp_cache = compress_kv_cache(cache, aes, bits_list[0])
+        comp_out   = continue_text(tok, model, enc, comp_cache, gen_len=gen_len)
+        examples.append({
+            "prompt": prompt,
+            "baseline": base_out,
+            "compressed": comp_out
+        })
+
+    # write everything
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir,"benchmark_results.json"),"w") as f:
         json.dump({
-            "perplexities": summary,
+            "perplexities": ppl_summary,
             "longbench": longbench,
+            "examples": examples,
             "config": cfg
         }, f, indent=2)
 
-    print(f"Saved benchmark results to {out_path}")
+    print(f"✅ Results and examples saved to {out_dir}/benchmark_results.json")
 
-# ─── CLI entrypoint ------------------------------------------------------------
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="KV cache benchmark")
-    parser.add_argument("--config", type=str, required=True, help="Path to JSON config")
-    args = parser.parse_args()
+if __name__=="__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("--config", required=True)
+    args = p.parse_args()
     cfg = json.load(open(args.config))
     run_benchmark(cfg["model_name"], cfg["autoencoder_path"], cfg["latent_dim"], cfg["output_dir"], cfg)
