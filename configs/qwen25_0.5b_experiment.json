@@ -15,7 +15,7 @@
   "lm_batch_size": 1,
   "buffer_size": 256,
   "batch_size": 16,
-  "dtype": "bf16",
+  "dtype": "fp16",
   "buffer_mult": 2,
   "gradient_accumulation_steps": 2,
 
@@ -27,4 +27,4 @@
   "max_seq_len": 8192,
   "hidden_size": 896,
   "vocab_size": 151936
-  } 
+} 
