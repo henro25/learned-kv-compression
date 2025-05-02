@@ -1,0 +1,6 @@
+{
+    "model_name": "Qwen/Qwen2.5-0.5B",
+    "autoencoder_path": "experiment_results_Qwen/Qwen_Qwen2.5-0.5B/Qwen_Qwen2.5-0.5B_latent32_lr0.0005/autoencoders_final.pth",
+    "latent_dim": 32,
+    "output_dir": "experiment_results_Qwen/Qwen_Qwen2.5-0.5B/temp_benchmark_results"
+}
