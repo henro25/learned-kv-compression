@@ -15,7 +15,7 @@ import argparse
 import subprocess
 import time
 import json
-import re
+import copy
 from pathlib import Path
 from typing import List, Dict, Any, Union, Optional
 
@@ -40,7 +40,7 @@ def train_autoencoder(model_name: str, latent_dim: int, learning_rate: float, nu
     print("MODEL DIR: ", model_dir)
     
     # Update config with training parameters
-    train_cfg = cfg.copy()
+    train_cfg = copy.deepcopy(cfg)
     train_cfg.update({
         "name": model_name,  # Ensure model name is passed to trainer
         "latent_dim": latent_dim,
@@ -65,7 +65,7 @@ def train_autoencoder(model_name: str, latent_dim: int, learning_rate: float, nu
     print(f"{'='*80}")
     print(" ".join(cmd))
     
-    subprocess.run(cmd)
+    subprocess.run(cmd, check=True)
     
     return os.path.join(model_dir, "autoencoders_final.pth")
 
@@ -81,7 +81,7 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
     
     # Update config with benchmark parameters
     # NOTE: THIS IS A HACK TO GET IT TO WORK
-    benchmark_cfg = cfg.copy()
+    benchmark_cfg = copy.deepcopy(cfg)
     benchmark_cfg.update({
         "model_name": model_name,
         "name": model_name,  # Include both for compatibility
@@ -110,7 +110,7 @@ def run_benchmark(model_name: str, autoencoder_path: str, latent_dim: int,
     print(f"{'='*80}")
     print(" ".join(cmd))
     
-    subprocess.run(cmd)
+    subprocess.run(cmd, check=True)
     
     return result_dir
 

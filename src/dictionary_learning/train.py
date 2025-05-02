@@ -182,7 +182,10 @@ def main(cfg):
 
             orig_attn, _  = compute_attention(queries, keys, values)
             recon_attn, _ = compute_attention(queries, k_recon, v_recon)
-            loss = F.mse_loss(recon_attn, orig_attn) / cfg["gradient_accumulation_steps"]
+            attn_loss = F.mse_loss(recon_attn, orig_attn)
+            kv_loss = F.mse_loss(k_recon, keys) + F.mse_loss(v_recon, values)
+            loss = (0.0 * attn_loss + 1.0 * kv_loss) / cfg["gradient_accumulation_steps"]
+            
             loss.backward()
             if (i+1) % cfg["gradient_accumulation_steps"] == 0 or (i+1) == batches_per_epoch:
                 # Clip gradients before stepping
