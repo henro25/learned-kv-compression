@@ -2,13 +2,12 @@
 """
 test_kv_compression.py
 
-Given a DistilGPT2 model and a set of trained layer-wise autoencoders,
-compare generation with full KV cache vs. compress→decompress KV cache.
+Given a HuggingFace causal-LM model (e.g. DistilGPT2, Qwen2.5-0.5B) and a set of trained
+layer-wise autoencoders, compare generation with full KV cache vs. compress→decompress KV cache.
 """
 
 import argparse
 import torch
-import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from src.models.autoencoder import Autoencoder
 
@@ -26,6 +25,31 @@ def load_model(model_name: str, device: torch.device, dtype: torch.dtype):
     )
     model.eval()
     return tokenizer, model
+
+def resolve_model_dims(config):
+    # number of layers
+    if hasattr(config, "num_hidden_layers"):
+        num_layers = config.num_hidden_layers
+    elif hasattr(config, "n_layer"):
+        num_layers = config.n_layer
+    else:
+        raise ValueError(f"Cannot determine number of layers from config: {config}")
+    # hidden dimension
+    if hasattr(config, "hidden_size"):
+        hidden_dim = config.hidden_size
+    elif hasattr(config, "n_embd"):
+        hidden_dim = config.n_embd
+    else:
+        raise ValueError(f"Cannot determine hidden_size from config: {config}")
+    # number of heads
+    if hasattr(config, "num_attention_heads"):
+        num_heads = config.num_attention_heads
+    elif hasattr(config, "n_head"):
+        num_heads = config.n_head
+    else:
+        raise ValueError(f"Cannot determine num_attention_heads from config: {config}")
+    head_dim = hidden_dim // num_heads
+    return num_layers, num_heads, head_dim
 
 def load_autoencoders(path: str, num_layers: int, head_dim: int, latent_dim: int, device: torch.device, dtype: torch.dtype):
     chk = torch.load(path, map_location=device)
@@ -51,10 +75,23 @@ def compress_kv(past, autoencoders):
         compressed.append((k_rec, v_rec))
     return tuple(compressed)
 
-def generate_with_cache(tokenizer, model, prompt, cache=None, gen_length=50, device=None):
+def build_kv_cache(tokenizer, model, prompt, target_tokens=50):
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    ids = inputs.input_ids
+    cache = None
+    for _ in range(target_tokens):
+        out = model(input_ids=ids[:, -1:], past_key_values=cache, use_cache=True)
+        cache = out.past_key_values
+        next_token = out.logits[:, -1, :].argmax(dim=-1).unsqueeze(-1)
+        ids = torch.cat([ids, next_token], dim=-1)
+    return cache
+
+def generate_with_cache(tokenizer, model, prompt, cache=None, gen_length=50):
+    # encode prompt to list of IDs
     encoded = tokenizer(prompt, return_tensors="pt").to(model.device)
     prompt_ids = encoded.input_ids[0].tolist()
 
+    # if no cache, run full prompt to build it
     if cache is None:
         out = model(input_ids=encoded.input_ids, use_cache=True)
         cache = out.past_key_values
@@ -65,13 +102,7 @@ def generate_with_cache(tokenizer, model, prompt, cache=None, gen_length=50, dev
         input_id = torch.tensor([[last_id]], device=model.device)
         with torch.no_grad():
             out = model(input_ids=input_id, past_key_values=cache, use_cache=True)
-            
-        # apply top-k top-p filtering
-        # logits = out.logits[:, -1, :]
-        
-        # original argmax
         next_id = out.logits[:, -1, :].argmax(dim=-1).item()
-        
         generated.append(next_id)
         cache = out.past_key_values
         last_id = next_id
@@ -79,82 +110,53 @@ def generate_with_cache(tokenizer, model, prompt, cache=None, gen_length=50, dev
     full_ids = prompt_ids + generated
     return tokenizer.decode(full_ids, skip_special_tokens=True)
 
-def build_kv_cache(tokenizer, model, prompt, target_tokens=50):
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    ids = inputs.input_ids
-    cache = None
-
-    for _ in range(target_tokens):
-        out = model(
-            input_ids=ids[:, -1:],
-            past_key_values=cache,
-            use_cache=True,
-        )
-        cache = out.past_key_values
-        next_token = out.logits[:, -1, :].argmax(dim=-1).unsqueeze(-1)
-        ids = torch.cat([ids, next_token], dim=-1)
-
-    return cache
-
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--model_name",      type=str, default="distilgpt2")
-    p.add_argument("--ae_path",         type=str, required=True)
-    p.add_argument("--prompt",          type=str, default="Once upon a time in a land far away,")
-    p.add_argument("--gen_length",      type=int, default=50, help="Tokens to generate")
-    p.add_argument("--latent_dim",      type=int, default=32)
-    p.add_argument("--dtype",           type=str, choices=["fp16","bf16","fp32"], default="fp16")
+    p.add_argument("--model_name", type=str, default="distilgpt2",
+                   help="HuggingFace model identifier")
+    p.add_argument("--ae_path",     type=str, required=True,
+                   help="Path to autoencoders_final.pth")
+    p.add_argument("--prompt",      type=str,
+                   default="Once upon a time in a land far away,")
+    p.add_argument("--gen_length",  type=int, default=50,
+                   help="Number of tokens to generate after prompt")
+    p.add_argument("--latent_dim",  type=int, default=32,
+                   help="Latent dimension used by the autoencoder")
+    p.add_argument("--dtype",       type=str, choices=["fp16","bf16","fp32"],
+                   default="fp32", help="Model weight dtype")
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dtype = {"fp16":torch.float16,"bf16":torch.bfloat16,"fp32":torch.float32}[args.dtype]
+    dtype_map = {"fp16":torch.float16, "bf16":torch.bfloat16, "fp32":torch.float32}
+    dtype = dtype_map[args.dtype]
 
+    # load model & tokenizer
     tokenizer, model = load_model(args.model_name, device, dtype)
 
-    # derive dims
-    num_layers = model.config.n_layer
-    head_dim    = model.config.hidden_size // model.config.num_attention_heads
+    # resolve model dimensions in a config-agnostic way
+    num_layers, num_heads, head_dim = resolve_model_dims(model.config)
 
-    # load autoencoders
+    # load your trained autoencoders
     autoencoders = load_autoencoders(
-        args.ae_path,
-        num_layers=num_layers,
-        head_dim=head_dim,
-        latent_dim=args.latent_dim,
-        device=device,
-        dtype=dtype
+        args.ae_path, num_layers, head_dim, args.latent_dim, device, dtype
     )
 
-    # build a KV cache of roughly gen_length tokens
-    print("⏳ building KV cache...")
+    print("⏳ Building KV cache...")
     cache = build_kv_cache(tokenizer, model, args.prompt, target_tokens=args.gen_length)
 
-    # baseline continuation
-    print("▶️  Generating baseline continuation...")
-    baseline = generate_with_cache(
-        tokenizer, model, args.prompt,
-        cache=cache,
-        gen_length=args.gen_length,
-        device=device
-    )
+    print("▶️ Generating baseline continuation...")
+    baseline = generate_with_cache(tokenizer, model, args.prompt, cache=cache, gen_length=args.gen_length)
 
-    # compress → decompress cache
-    print("🔧 compressing & decompressing KV cache...")
+    print("🔧 Compressing & decompressing KV cache...")
     comp_cache = compress_kv(cache, autoencoders)
 
-    print("▶️  Generating compressed continuation...")
-    compressed = generate_with_cache(
-        tokenizer, model, args.prompt,
-        cache=comp_cache,
-        gen_length=args.gen_length,
-        device=device
-    )
+    print("▶️ Generating compressed continuation...")
+    compressed = generate_with_cache(tokenizer, model, args.prompt, cache=comp_cache, gen_length=args.gen_length)
 
-    # display
     print("\n=== BASELINE OUTPUT ===\n")
     print(baseline)
     print("\n=== COMPRESSED OUTPUT ===\n")
     print(compressed)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
