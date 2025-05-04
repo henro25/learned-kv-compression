@@ -207,12 +207,11 @@ def main(cfg):
         print(f"Epoch {epoch+1}, Loss: {epoch_loss:.4f}")
         scheduler.step()
         
-        # Save checkpoint every 5 epochs
-        if (epoch+1) % 5 == 0:
-            ckpt = {f"layer_{i}": ae.state_dict() for i, ae in enumerate(autoencoders)}
-            path = os.path.join(cfg["output_dir"], f"autoencoders_epoch_{epoch+1}.pth")
-            torch.save(ckpt, path)
-            print(f"Saved {path}")
+        # Save checkpoint every epoch
+        ckpt = {f"layer_{i}": ae.state_dict() for i, ae in enumerate(autoencoders)}
+        path = os.path.join(cfg["output_dir"], f"autoencoders_epoch_{epoch+1}.pth")
+        torch.save(ckpt, path)
+        print(f"Saved {path}")
 
         if (epoch+1) % cfg["eval_interval"] == 0:
             # Periodic evaluation (no best-model checkpoint saved)

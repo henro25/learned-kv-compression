@@ -1,6 +1,6 @@
 {
     "models": ["distilgpt2"],
-    "latent_dims": [8, 16, 32, 64],
+    "latent_dims": [32],
     "learning_rates": [1e-3],
     "num_epochs": [10],
     "num_train_texts": [50000],
