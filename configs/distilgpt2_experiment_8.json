@@ -24,4 +24,3 @@
   "device": "cuda",
   "max_seq_len": 256
 }
-  
