@@ -35,6 +35,7 @@ from src.models.autoencoder import Autoencoder
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 # ─── Helpers ────────────────────────────────────────────────────────────────────
 
 def quantize_tensor(x: torch.Tensor, bits: int):
@@ -115,38 +116,35 @@ def top_k_logits(logits: torch.Tensor, k: int = 50) -> torch.Tensor:
 
 def continue_text(tokenizer, model, enc, past, gen_len=20, top_k=50, temp=1.0, bits=None):
     """
-    If bits is not None, we quantize the 'past' between each step for the
-    KV-baseline and AE-compressed generations alike.
+    Generate tokens one at a time, optionally quantizing the KV cache
+    (for both KV-only and AE-compressed runs) by passing `bits`.
     """
     ids  = enc.input_ids.clone()
-    pos  = ids.size(1)
     last = ids[:, -1:].to(model.device)
 
     for _ in range(gen_len):
-        mask    = torch.ones_like(last)
-        pos_ids = torch.tensor([[pos]], device=model.device)
+        mask = torch.ones_like(last)
         with torch.no_grad():
             out = model(
                 input_ids=last,
                 attention_mask=mask,
-                position_ids=pos_ids,
                 past_key_values=past,
                 use_cache=True,
             )
         logits, past = out.logits[:, -1, :], out.past_key_values
 
-        # apply quantization to the cached KV if requested
+        # quantize the newly cached KV if requested
         past = quantize_past_key_values(past, bits)
 
-        filt   = top_k_logits(logits / temp, top_k)
-        probs  = torch.softmax(filt, dim=-1)
-        nxt    = torch.multinomial(probs, num_samples=1)
+        filt  = top_k_logits(logits / temp, top_k)
+        probs = torch.softmax(filt, dim=-1)
+        nxt   = torch.multinomial(probs, num_samples=1)
 
         ids  = torch.cat([ids, nxt], dim=-1)
         last = nxt
-        pos += 1
 
     return tokenizer.decode(ids[0], skip_special_tokens=True)
+
 
 # ─── Perplexity routines ────────────────────────────────────────────────────────
 
@@ -176,7 +174,7 @@ def calculate_perplexity(model, tokenizer, texts, max_length=1024, desc="Raw bas
 
 def evaluate_with_kv_quant(model, tokenizer, texts, max_length=1024, bits=None):
     """
-    Quantizes the cached KV to 'bits' at each step, then computes PPL.
+    Incremental decoding + quantization-only of the KV cache.
     """
     model.eval()
     total_loss, total_tokens = 0.0, 0
@@ -204,13 +202,16 @@ def evaluate_with_kv_quant(model, tokenizer, texts, max_length=1024, bits=None):
                 total_loss  += loss_val.item()
                 total_tokens += 1
 
-                # quantize the new cache if requested
+                # quantize that new cache
                 past = quantize_past_key_values(out.past_key_values, bits)
 
     logger.info(f"[KV-cache baseline] valid tokens = {total_tokens}")
     return float("nan") if total_tokens == 0 else torch.exp(torch.tensor(total_loss/total_tokens)).item()
 
 def evaluate_with_compressed_cache(model, tokenizer, aes, texts, max_length=1024, bits=None):
+    """
+    Incremental decoding + AE compression + quantization of the KV cache.
+    """
     model.eval()
     total_loss, total_tokens = 0.0, 0
     loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
@@ -227,13 +228,13 @@ def evaluate_with_compressed_cache(model, tokenizer, aes, texts, max_length=1024
             for t in range(ids.size(1)-1):
                 if not mask[0, t+1]:
                     continue
-                out  = model(
+                out      = model(
                     input_ids=ids[:, t:t+1],
                     attention_mask=mask[:, t:t+1],
                     past_key_values=past,
                     use_cache=True,
                 )
-                # compress via AE + quant
+                # AE + quant
                 past = compress_kv_cache(out.past_key_values, aes, bits)
 
                 loss_val = loss_fct(out.logits[:, -1, :], ids[:, t+1])
@@ -258,6 +259,7 @@ def evaluate_longbench(model, tokenizer, aes, cfg, bits=None):
                                 model, tokenizer, aes, texts,
                                 cfg["max_seq_len"], bits)
     return out
+
 
 # ─── Main runner ────────────────────────────────────────────────────────────────
 
@@ -312,16 +314,20 @@ def run_benchmark(model_name, ae_path, lat_dim, out_dir, cfg):
     longbench = evaluate_longbench(model, tok, aes, cfg, bits_list[0])
 
     # 4) examples (first 5)
-    gen_len  = cfg.get("gen_len", 20)
-    top_k    = cfg.get("top_k", 50)
+    gen_len = cfg.get("gen_len", 20)
+    top_k   = cfg.get("top_k", 50)
+
     examples = []
     for prompt in texts[:5]:
         enc, cache = prompt_cache(tok, model, prompt)
 
-        raw_out  = continue_text(tok, model, enc, cache, gen_len, top_k, bits=None)
-        kv_out   = continue_text(tok, model, enc, cache, gen_len, top_k, bits=bits_list[0])
+        raw_out = continue_text(tok, model, enc, cache,
+                                gen_len=gen_len, top_k=top_k, bits=None)
+        kv_out  = continue_text(tok, model, enc, cache,
+                                gen_len=gen_len, top_k=top_k, bits=bits_list[0])
         comp_cache = compress_kv_cache(cache, aes, bits_list[0])
-        ae_out     = continue_text(tok, model, enc, comp_cache, gen_len, top_k, bits=None)
+        ae_out     = continue_text(tok, model, enc, comp_cache,
+                                   gen_len=gen_len, top_k=top_k, bits=None)
 
         examples.append({
             "prompt":        prompt,
@@ -341,6 +347,7 @@ def run_benchmark(model_name, ae_path, lat_dim, out_dir, cfg):
         }, f, indent=2)
 
     print(f"✅ Saved results to {out_dir}/benchmark_results.json")
+
 
 if __name__=="__main__":
     p = argparse.ArgumentParser(description="KV-cache benchmark")
