@@ -1,9 +1,10 @@
 {
   "models": ["Qwen/Qwen2.5-0.5B"],
-  "latent_dims": [16],
-  "learning_rates": [1e-3],
-  "num_epochs": [5],
-  "num_train_texts": [50000],
+  
+  "input_dim": 16,
+  "lr": 0.001,
+  "num_epochs": 10,
+  "num_train_texts": 50000,
   "seed": 42,
   "skip_training": false,
   "quantization_bits": [2, 4, 8, 16],
