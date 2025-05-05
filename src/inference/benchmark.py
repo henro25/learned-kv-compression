@@ -24,7 +24,8 @@ from transformers.utils import logging as hf_logging
 hf_logging.set_verbosity_error()
 
 import json, argparse
-import torch, torch.nn.functional as F
+import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.cache_utils import DynamicCache
@@ -64,18 +65,21 @@ def resolve_dims(cfg):
         n = cfg.n_layer
     else:
         raise ValueError("Cannot find layer count in config")
+
     if hasattr(cfg, "hidden_size"):
         h = cfg.hidden_size
     elif hasattr(cfg, "n_embd"):
         h = cfg.n_embd
     else:
         raise ValueError("Cannot find hidden_size in config")
+
     if hasattr(cfg, "num_attention_heads"):
         heads = cfg.num_attention_heads
     elif hasattr(cfg, "n_head"):
         heads = cfg.n_head
     else:
         raise ValueError("Cannot find num_attention_heads in config")
+
     return n, heads, h // heads
 
 def compress_kv_cache(past, aes, bits=None):
@@ -168,12 +172,11 @@ def calculate_perplexity(model, tokenizer, texts, max_length=1024, desc="Raw bas
             total_tokens += int(mask.view(-1).sum().item())
 
     logger.info(f"[{desc}] valid tokens = {total_tokens}")
-    return float("nan") if total_tokens==0 else torch.exp(torch.tensor(total_loss/total_tokens)).item()
+    return float("nan") if total_tokens == 0 else torch.exp(torch.tensor(total_loss/total_tokens)).item()
 
 def evaluate_with_kv_quant(model, tokenizer, texts, max_length=1024, bits=None):
     """
-    Identical to your old KV baseline, except we now quantize the past
-    with bits if provided—so the cache is directly degraded.
+    Quantizes the cached KV to 'bits' at each step, then computes PPL.
     """
     model.eval()
     total_loss, total_tokens = 0.0, 0
@@ -191,7 +194,7 @@ def evaluate_with_kv_quant(model, tokenizer, texts, max_length=1024, bits=None):
             for t in range(ids.size(1)-1):
                 if not mask[0, t+1]:
                     continue
-                out  = model(
+                out      = model(
                     input_ids=ids[:, t:t+1],
                     attention_mask=mask[:, t:t+1],
                     past_key_values=past,
@@ -205,7 +208,7 @@ def evaluate_with_kv_quant(model, tokenizer, texts, max_length=1024, bits=None):
                 past = quantize_past_key_values(out.past_key_values, bits)
 
     logger.info(f"[KV-cache baseline] valid tokens = {total_tokens}")
-    return float("nan") if total_tokens==0 else torch.exp(torch.tensor(total_loss/total_tokens)).item()
+    return float("nan") if total_tokens == 0 else torch.exp(torch.tensor(total_loss/total_tokens)).item()
 
 def evaluate_with_compressed_cache(model, tokenizer, aes, texts, max_length=1024, bits=None):
     model.eval()
@@ -238,9 +241,26 @@ def evaluate_with_compressed_cache(model, tokenizer, aes, texts, max_length=1024
                 total_tokens += 1
 
     logger.info(f"[AE-compressed KV] valid tokens = {total_tokens}")
-    return float("nan") if total_tokens==0 else torch.exp(torch.tensor(total_loss/total_tokens)).item()
+    return float("nan") if total_tokens == 0 else torch.exp(torch.tensor(total_loss/total_tokens)).item()
 
-# ─── Main runner ───────────────────────────────────────────────────────────────
+def evaluate_longbench(model, tokenizer, aes, cfg, bits=None):
+    subsets = ['narrativeqa','hotpotqa','2wikimqa','musique','dureader']
+    out = {"baseline":{}, "compressed":{}}
+    n_eval = cfg.get("num_eval_texts")
+
+    for s in subsets:
+        data  = load_dataset("THUDM/LongBench", s, trust_remote_code=True)["test"]["input"]
+        texts = [x for x in data if x.strip()][:n_eval or None]
+        out["baseline"][s]   = calculate_perplexity(
+                                model, tokenizer, texts,
+                                cfg["max_seq_len"], f"PPL {s}")
+        out["compressed"][s] = evaluate_with_compressed_cache(
+                                model, tokenizer, aes, texts,
+                                cfg["max_seq_len"], bits)
+    return out
+
+# ─── Main runner ────────────────────────────────────────────────────────────────
+
 def run_benchmark(model_name, ae_path, lat_dim, out_dir, cfg):
     device = torch.device(cfg.get("device","cuda"))
     dtype  = {"fp32":torch.float32,"fp16":torch.float16,"bf16":torch.bfloat16}[cfg.get("dtype","fp32")]
@@ -298,15 +318,10 @@ def run_benchmark(model_name, ae_path, lat_dim, out_dir, cfg):
     for prompt in texts[:5]:
         enc, cache = prompt_cache(tok, model, prompt)
 
-        # raw‐context continuation
-        raw_out  = continue_text(tok, model, enc, cache, gen_len, top_k)
-
-        # KV‐cache (no quant) continuation
-        kv_out   = continue_text(tok, model, enc, cache, gen_len, top_k)
-
-        # AE‐compressed continuation
+        raw_out  = continue_text(tok, model, enc, cache, gen_len, top_k, bits=None)
+        kv_out   = continue_text(tok, model, enc, cache, gen_len, top_k, bits=bits_list[0])
         comp_cache = compress_kv_cache(cache, aes, bits_list[0])
-        ae_out     = continue_text(tok, model, enc, comp_cache, gen_len, top_k)
+        ae_out     = continue_text(tok, model, enc, comp_cache, gen_len, top_k, bits=None)
 
         examples.append({
             "prompt":        prompt,
@@ -315,7 +330,6 @@ def run_benchmark(model_name, ae_path, lat_dim, out_dir, cfg):
             "ae_compressed": ae_out
         })
 
-    # write results
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir,"benchmark_results.json"), "w") as f:
         json.dump({
