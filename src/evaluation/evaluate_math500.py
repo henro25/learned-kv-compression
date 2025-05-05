@@ -44,8 +44,10 @@ def build_wrapper(model_name, latent_dim, bits, ae_ckpt):
 
 # ── 3  main driver ────────────────────────────────────────────────────────────
 def main():
-    cfg = json.load(open(argparse.ArgumentParser()
-                         .add_argument("--config", required=True).parse_args().config))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    args = parser.parse_args()
+    cfg = json.load(open(args.config))
 
     model_name   = cfg["model_name"]
     ae_ckpt      = cfg["autoencoder_path"]
