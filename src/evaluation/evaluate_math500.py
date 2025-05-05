@@ -11,8 +11,21 @@ from pathlib import Path
 
 # ── 1  inline task registration (no YAML, no forbidden keys) ──────────────────
 def register_math500_inline():
-    from lm_eval.tasks.hendrycks_math import HendrycksMath
     from lm_eval.tasks import TASK_REGISTRY
+    try:
+        # Attempt direct import (preferred method)
+        from lm_eval.tasks.hendrycks_math import HendrycksMath
+    except ImportError:
+        # Fallback: dynamically retrieve the task if import fails
+        from lm_eval.tasks import get_task
+        try:
+            HendrycksMath = get_task("hendrycks_math").__class__
+            print("Warning: Direct import failed, using fallback via get_task('hendrycks_math')")
+        except KeyError:
+            raise ImportError(
+                "Cannot find 'HendrycksMath'. Ensure lm_eval is up-to-date and includes the MATH task. "
+                "Try running 'pip install --upgrade lm-eval'."
+            )
 
     class Math500Inline(HendrycksMath):
         """500‑problem slice of Hendrycks MATH (HuggingFaceH4/MATH‑500)."""
@@ -57,7 +70,7 @@ def main():
     batch_size   = cfg.get("batch_size", 4)
     device       = cfg.get("device", "cuda")
 
-    # register inline task before importing evaluator
+    # Register inline task before importing evaluator
     register_math500_inline()
     from lm_eval import evaluator
 
