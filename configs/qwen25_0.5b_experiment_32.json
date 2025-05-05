@@ -1,0 +1,33 @@
+{
+  "models": ["Qwen/Qwen2.5-0.5B"],
+  "latent_dims": [32],
+  "learning_rates": [1e-3],
+  "num_epochs": [5],
+  "num_train_texts": [50000],
+  "seed": 42,
+  "skip_training": false,
+  "quantization_bits": [2, 4, 8, 16],
+  "output_dir": "experiment_results_Qwen",
+
+  "val_split": 0.1,
+  "lr_reduce_factor": 0.5,
+  "lr_patience": 1,
+  "eval_interval": 1,
+  "num_eval_texts": 25,
+
+  "lm_batch_size": 1,
+  "buffer_size": 256,
+  "batch_size": 16,
+  "dtype": "fp16",
+  "buffer_mult": 2,
+  "gradient_accumulation_steps": 2,
+
+  "device": "cuda",
+
+  "name": "Qwen/Qwen2.5-0.5B",
+  "num_hidden_layers": 24,
+  "num_attention_heads": 14,
+  "max_seq_len": 8192,
+  "hidden_size": 896,
+  "vocab_size": 151936
+} 
