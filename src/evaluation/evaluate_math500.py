@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-evaluate_math500.py  —  config‑driven KV‑cache compression eval on MATH‑500
+evaluate_math500.py  –  run baseline + AE‑compressed KV on MATH‑500
+using a single config JSON (same schema as your WikiText benchmarks).
 """
 
 import argparse, json, importlib.util
 from pathlib import Path
 
-# ── helper: register task ------------------------------------------------------
+# ── helper to register / overwrite math500 task ───────────────────────────────
 def ensure_math500_registered():
     import lm_eval, textwrap
     task_dir = Path(lm_eval.__file__).parent / "tasks" / "math500"
-    if task_dir.exists():
-        return
-    task_dir.mkdir(parents=True, exist_ok=True)
+    task_dir.mkdir(parents=True, exist_ok=True)   # always rewrite YAML
     (task_dir / "task.yaml").write_text(textwrap.dedent("""\
         task: math500
         dataset_path: HuggingFaceH4/MATH-500
@@ -21,9 +20,9 @@ def ensure_math500_registered():
         doc_to_target: "{{answer}}"
         metrics: [ exact_match ]
     """))
-    print("✓ Registered math500 task")
+    print("✓ math500 task YAML refreshed (no deprecated keys)")
 
-# ── helper: wrap model so it compresses the KV cache ---------------------------
+# ── dynamic wrapper that injects compress_past() ──────────────────────────────
 def build_wrapper(model_name, latent_dim, bits, ae_ckpt):
     from lm_eval.models.huggingface import HFCausalLM
     spec = importlib.util.spec_from_file_location("benchmark", "./benchmark.py")
@@ -44,10 +43,10 @@ def build_wrapper(model_name, latent_dim, bits, ae_ckpt):
             return out
     return HFAECompressed
 
-# ── main -----------------------------------------------------------------------
+# ── main ───────────────────────────────────────────────────────────────────────
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True, help="JSON config (same schema as before)")
+    ap = argparse.ArgumentParser(description="Evaluate MATH‑500 accuracy with KV compression")
+    ap.add_argument("--config", required=True)
     cfg = json.load(open(ap.parse_args().config))
 
     model_name = cfg["model_name"]
@@ -61,7 +60,7 @@ def main():
     ensure_math500_registered()
     from lm_eval import evaluator
 
-    # Baseline run
+    # baseline
     print(f"\n▶ Baseline : {model_name}")
     baseline = evaluator.simple_evaluate(
         model="hf",
@@ -74,7 +73,7 @@ def main():
     print(f"   exact‑match {base_acc:.3f}")
     json.dump(baseline, open(out_dir/"math500_baseline.json","w"), indent=2)
 
-    # Compressed runs
+    # compressed runs
     for bits in bits_list:
         tag = f"lat{latent_dim}_bits{bits}"
         print(f"\n▶ Compressed : latent={latent_dim}  bits={bits}")
@@ -88,7 +87,7 @@ def main():
         acc = res["results"]["math500"]["exact_match"]
         ratio = (64/latent_dim)*(16/bits)
         print(f"   accuracy {acc:.3f}   (compression ×{ratio:.1f})")
-        json.dump(res, open(out_dir/f"math500_{tag}.json"), indent=2)
+        json.dump(res, open(out_dir/f"math500_{tag}.json","w"), indent=2)
 
 if __name__ == "__main__":
     main()
