@@ -1,34 +1,29 @@
 #!/usr/bin/env python3
 """
-evaluate_math500.py  ─ config‑driven kv‑compression accuracy on MATH‑500
+evaluate_math500.py  —  config‑driven KV‑cache compression eval on MATH‑500
 """
 
 import argparse, json, importlib.util
 from pathlib import Path
 
-# ── lm‑eval helpers ────────────────────────────────────────────────────────────
+# ── helper: register task ------------------------------------------------------
 def ensure_math500_registered():
     import lm_eval, textwrap
     task_dir = Path(lm_eval.__file__).parent / "tasks" / "math500"
     if task_dir.exists():
         return
     task_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / "task.yaml").write_text(textwrap.dedent("""
-        group: math
+    (task_dir / "task.yaml").write_text(textwrap.dedent("""\
         task: math500
         dataset_path: HuggingFaceH4/MATH-500
         output_type: generation
         doc_to_text: "Problem: {{problem}}\\nAnswer:"
         doc_to_target: "{{answer}}"
-        metric_list:
-          - metric: exact_match
+        metrics: [ exact_match ]
     """))
-    (task_dir / "__init__.py").write_text(
-        "from lm_eval.tasks.hendrycks_math import HendrycksMath\n"
-        "class Math500(HendrycksMath):\n"
-        "    DATASET_PATH = 'HuggingFaceH4/MATH-500'\n")
     print("✓ Registered math500 task")
 
+# ── helper: wrap model so it compresses the KV cache ---------------------------
 def build_wrapper(model_name, latent_dim, bits, ae_ckpt):
     from lm_eval.models.huggingface import HFCausalLM
     spec = importlib.util.spec_from_file_location("benchmark", "./benchmark.py")
@@ -49,24 +44,24 @@ def build_wrapper(model_name, latent_dim, bits, ae_ckpt):
             return out
     return HFAECompressed
 
-# ── main ───────────────────────────────────────────────────────────────────────
+# ── main -----------------------------------------------------------------------
 def main():
-    argp = argparse.ArgumentParser()
-    argp.add_argument("--config", required=True)
-    cfg = json.load(open(argp.parse_args().config))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", required=True, help="JSON config (same schema as before)")
+    cfg = json.load(open(ap.parse_args().config))
 
     model_name = cfg["model_name"]
     ae_ckpt    = cfg["autoencoder_path"]
-    latent     = cfg["latent_dim"]
+    latent_dim = cfg["latent_dim"]
     bits_list  = cfg["quantization_bits"]
     out_dir    = Path(cfg["output_dir"]); out_dir.mkdir(parents=True, exist_ok=True)
-    device     = cfg.get("device", "cuda")
     batch_size = cfg.get("batch_size", 4)
+    device     = cfg.get("device", "cuda")
 
     ensure_math500_registered()
     from lm_eval import evaluator
 
-    # baseline with official HuggingFace backend "hf"
+    # Baseline run
     print(f"\n▶ Baseline : {model_name}")
     baseline = evaluator.simple_evaluate(
         model="hf",
@@ -79,22 +74,21 @@ def main():
     print(f"   exact‑match {base_acc:.3f}")
     json.dump(baseline, open(out_dir/"math500_baseline.json","w"), indent=2)
 
-    # compressed runs
+    # Compressed runs
     for bits in bits_list:
-        tag = f"lat{latent}_bits{bits}"
-        print(f"\n▶ Compressed : latent={latent}  bits={bits}")
-        Wrapped = build_wrapper(model_name, latent, bits, ae_ckpt)
+        tag = f"lat{latent_dim}_bits{bits}"
+        print(f"\n▶ Compressed : latent={latent_dim}  bits={bits}")
+        Wrapper = build_wrapper(model_name, latent_dim, bits, ae_ckpt)
         res = evaluator.simple_evaluate(
-            model=Wrapped,
-            model_args="",
+            model=Wrapper, model_args="",
             tasks=["math500"],
             batch_size=batch_size,
             device=device,
         )
         acc = res["results"]["math500"]["exact_match"]
-        ratio = (64/latent)*(16/bits)
+        ratio = (64/latent_dim)*(16/bits)
         print(f"   accuracy {acc:.3f}   (compression ×{ratio:.1f})")
-        json.dump(res, open(out_dir/f"math500_{tag}.json","w"), indent=2)
+        json.dump(res, open(out_dir/f"math500_{tag}.json"), indent=2)
 
 if __name__ == "__main__":
     main()
