@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-benchmark.py   (fixed 2025‑05‑05)
+benchmark.py   (fixed 2025-05-05)
 
 Benchmarks:
-  • raw‑perplexity baseline
-  • KV‑cache baseline with optional quantisation
-  • AE‑compressed + quantised KV perplexity
-  • LongBench across bit‑widths
+  • raw-perplexity baseline
+  • KV-cache baseline with optional quantisation
+  • AE-compressed + quantised KV perplexity
+  • LongBench across bit-widths
   • Example generations
 
 Key points
 ──────────
 • Filters out bits == 1
-• LongBench compressed results for every remaining bit‑width
+• LongBench compressed results for every remaining bit-width
 • Uses reshape() not view() in compress_past()
 """
 
@@ -31,7 +31,7 @@ absl_log.set_stderrthreshold("fatal")
 from transformers.utils import logging as hf_logging
 hf_logging.set_verbosity_error()
 
-# ─── Std imports ────────────────────────────────────────────────────────────────
+# ─── Std imports ────────────────────────────────────────────────────────────────
 import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -64,9 +64,22 @@ def quantize_past(past, bits):
         (quantize_tensor(k, bits), quantize_tensor(v, bits)) for k, v in past))
 
 def resolve_dims(cfg):
-    L = getattr(cfg, "num_hidden_layers", getattr(cfg, "n_layer"))
-    H = getattr(cfg, "hidden_size", getattr(cfg, "n_embd"))
-    nH = getattr(cfg, "num_attention_heads", getattr(cfg, "n_head"))
+    # Try all common layer‐count attributes
+    L = getattr(cfg, "num_hidden_layers", None)
+    if L is None:
+        L = getattr(cfg, "n_layer", None)
+    if L is None:
+        L = getattr(cfg, "num_layers", None)
+    # Hidden size
+    H = getattr(cfg, "hidden_size", None)
+    if H is None:
+        H = getattr(cfg, "n_embd", None)
+    # Num heads
+    nH = getattr(cfg, "num_attention_heads", None)
+    if nH is None:
+        nH = getattr(cfg, "n_head", None)
+    if None in (L, H, nH):
+        raise ValueError(f"Could not resolve model dimensions from config: {cfg}")
     return L, nH, H // nH
 
 def compress_past(past, aes, bits):
@@ -97,7 +110,6 @@ def top_k_filter(logits, k):
     return out
 
 def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0, bits=None):
-    """Incremental generation with optional KV quantisation."""
     ids = enc.input_ids.clone()
     last = ids[:, -1:].to(model.device)
     for _ in range(gen_len):
@@ -152,21 +164,28 @@ def run_benchmark(cfg):
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(cfg["model_name"], torch_dtype=dtype,
-                                                 device_map={"":device}, use_cache=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        cfg["model_name"], torch_dtype=dtype,
+        device_map={"":device}, use_cache=True
+    )
     model.config.pad_token_id = tok.pad_token_id
 
+    # ←── here is the fix!
     L, _, dH = resolve_dims(model.config)
+
     ckpt = torch.load(cfg["autoencoder_path"], map_location=device) if os.path.exists(cfg["autoencoder_path"]) else None
     aes = []
     for i in range(L):
         ae = Autoencoder(dH, cfg["latent_dim"], dtype=dtype).to(device)
-        if ckpt: ae.load_state_dict(ckpt[f"layer_{i}"])
-        ae.eval(); aes.append(ae)
+        if ckpt:
+            ae.load_state_dict(ckpt[f"layer_{i}"])
+        ae.eval()
+        aes.append(ae)
 
     ds = load_dataset("wikitext","wikitext-103-raw-v1")["test"]["text"]
     texts = [t for t in ds if t.strip()]
-    if cfg.get("num_eval_texts"): texts = texts[:cfg["num_eval_texts"]]
+    if cfg.get("num_eval_texts"):
+        texts = texts[:cfg["num_eval_texts"]]
 
     raw_ppl = perplexity(model, tok, texts, cfg["max_seq_len"], "Raw")
 
@@ -176,7 +195,10 @@ def run_benchmark(cfg):
     for b in bits_list:
         kv_ppl = token_loop(model, tok, texts, bits=b, max_len=cfg["max_seq_len"], desc=f"KV{b}")
         ae_ppl = token_loop(model, tok, texts, aes=aes, bits=b, max_len=cfg["max_seq_len"], desc=f"AE{b}")
-        results["perplexities"][str(b)] = {"kv_cache_baseline_ppl": kv_ppl, "ae_compressed_ppl": ae_ppl}
+        results["perplexities"][str(b)] = {
+          "kv_cache_baseline_ppl": kv_ppl,
+          "ae_compressed_ppl":      ae_ppl
+        }
 
     # LongBench
     subsets = ["narrativeqa","hotpotqa","2wikimqa","musique","dureader"]
@@ -186,12 +208,14 @@ def run_benchmark(cfg):
         txts = [t for t in data if t.strip()][: cfg.get("num_eval_texts") or None]
         longbench["baseline"][s] = perplexity(model, tok, txts, cfg["max_seq_len"], f"PPL {s}")
         for b in bits_list:
-            longbench["compressed"][str(b)][s] = token_loop(model, tok, txts, aes=aes, bits=b,
-                                                            max_len=cfg["max_seq_len"], desc=f"{s} AE{b}")
+            longbench["compressed"][str(b)][s] = token_loop(
+                model, tok, txts, aes=aes, bits=b,
+                max_len=cfg["max_seq_len"], desc=f"{s} AE{b}"
+            )
     results["longbench"] = longbench
 
     # example generations
-    examples=[]
+    examples = []
     gen_len, top_k = cfg.get("gen_len",20), cfg.get("top_k",50)
     for prompt in texts[:5]:
         enc = tok(prompt, return_tensors="pt").to(device)
@@ -201,17 +225,23 @@ def run_benchmark(cfg):
         ae   = continue_text(tok, model, enc,
                              compress_past(cache, aes, bits_list[0]),
                              gen_len=gen_len, top_k=top_k)
-        examples.append({"prompt":prompt,"raw":raw,"kv_quant":kv,"ae_compressed":ae})
-    results["examples"]=examples
-    results["config"]=cfg
+        examples.append({
+          "prompt": prompt,
+          "raw":     raw,
+          "kv_quant":kv,
+          "ae_compressed": ae
+        })
+    results["examples"] = examples
+    results["config"]   = cfg
 
-    os.makedirs(cfg["output_dir"],exist_ok=True)
-    with open(os.path.join(cfg["output_dir"],"benchmark_results.json"),"w") as f:
-        json.dump(results,f,indent=2)
-    print("✅  Saved to",cfg["output_dir"]+"/benchmark_results.json")
+    os.makedirs(cfg["output_dir"], exist_ok=True)
+    with open(os.path.join(cfg["output_dir"], "benchmark_results.json"), "w") as f:
+        json.dump(results, f, indent=2)
+    print("✅  Saved to", cfg["output_dir"]+"/benchmark_results.json")
 
 
 # ───── CLI ─────────────────────────────────────────────────────────────────────
 if __name__=="__main__":
-    p=argparse.ArgumentParser(); p.add_argument("--config",required=True)
+    p = argparse.ArgumentParser()
+    p.add_argument("--config", required=True)
     run_benchmark(json.load(open(p.parse_args().config)))
