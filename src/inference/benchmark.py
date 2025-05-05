@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-benchmark.py   (2025‑05‑05)
+benchmark.py   (fixed 2025‑05‑05)
 
-Benchmarks raw, KV‑cache (quantised) and AE‑compressed (quantised) perplexity,
-plus LongBench across multiple quantisation bit‑widths.
+Benchmarks:
+  • raw‑perplexity baseline
+  • KV‑cache baseline with optional quantisation
+  • AE‑compressed + quantised KV perplexity
+  • LongBench across bit‑widths
+  • Example generations
 
-Changes vs. previous version
-────────────────────────────
-• filters out bits == 1
-• LongBench now evaluated for every (baseline, compressed, bits) combo
+Key points
+──────────
+• Filters out bits == 1
+• LongBench compressed results for every remaining bit‑width
+• Uses reshape() not view() in compress_past()
 """
 
 # ─── Quiet noisy logs ───────────────────────────────────────────────────────────
@@ -91,6 +96,20 @@ def top_k_filter(logits, k):
     out.scatter_(-1, idx, v)
     return out
 
+def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0, bits=None):
+    """Incremental generation with optional KV quantisation."""
+    ids = enc.input_ids.clone()
+    last = ids[:, -1:].to(model.device)
+    for _ in range(gen_len):
+        with torch.no_grad():
+            out = model(input_ids=last, past_key_values=past, use_cache=True)
+        logits, past = out.logits[:, -1, :], quantize_past(out.past_key_values, bits)
+        logits = top_k_filter(logits / temp, top_k)
+        probs  = torch.softmax(logits, dim=-1)
+        nxt    = safe_sample(probs)
+        ids, last = torch.cat([ids, nxt], dim=-1), nxt
+    return tokenizer.decode(ids[0], skip_special_tokens=True)
+
 
 # ───── Evaluation primitives ───────────────────────────────────────────────────
 def perplexity(model, tok, texts, max_len, desc):
@@ -137,7 +156,6 @@ def run_benchmark(cfg):
                                                  device_map={"":device}, use_cache=True)
     model.config.pad_token_id = tok.pad_token_id
 
-    # autoencoders
     L, _, dH = resolve_dims(model.config)
     ckpt = torch.load(cfg["autoencoder_path"], map_location=device) if os.path.exists(cfg["autoencoder_path"]) else None
     aes = []
@@ -146,21 +164,21 @@ def run_benchmark(cfg):
         if ckpt: ae.load_state_dict(ckpt[f"layer_{i}"])
         ae.eval(); aes.append(ae)
 
-    # texts
     ds = load_dataset("wikitext","wikitext-103-raw-v1")["test"]["text"]
     texts = [t for t in ds if t.strip()]
     if cfg.get("num_eval_texts"): texts = texts[:cfg["num_eval_texts"]]
 
-    # bit‑widths (skip 1)
+    raw_ppl = perplexity(model, tok, texts, cfg["max_seq_len"], "Raw")
+
     bits_list = [b for b in cfg.get("quantization_bits",[None]) if b not in (1,)]
-    results = {"raw_baseline_ppl": perplexity(model, tok, texts, cfg["max_seq_len"], "Raw") , "perplexities": {}}
+    results = {"raw_baseline_ppl": raw_ppl, "perplexities": {}}
 
     for b in bits_list:
         kv_ppl = token_loop(model, tok, texts, bits=b, max_len=cfg["max_seq_len"], desc=f"KV{b}")
         ae_ppl = token_loop(model, tok, texts, aes=aes, bits=b, max_len=cfg["max_seq_len"], desc=f"AE{b}")
         results["perplexities"][str(b)] = {"kv_cache_baseline_ppl": kv_ppl, "ae_compressed_ppl": ae_ppl}
 
-    # LongBench: baseline once, compressed per bit‑width
+    # LongBench
     subsets = ["narrativeqa","hotpotqa","2wikimqa","musique","dureader"]
     longbench = {"baseline": {}, "compressed": {str(b):{} for b in bits_list}}
     for s in subsets:
@@ -172,18 +190,18 @@ def run_benchmark(cfg):
                                                             max_len=cfg["max_seq_len"], desc=f"{s} AE{b}")
     results["longbench"] = longbench
 
-    # examples
+    # example generations
     examples=[]
     gen_len, top_k = cfg.get("gen_len",20), cfg.get("top_k",50)
     for prompt in texts[:5]:
-        enc, cache = tok(prompt, return_tensors="pt").to(device), None
+        enc = tok(prompt, return_tensors="pt").to(device)
         cache = model(**enc, use_cache=True).past_key_values
         raw  = continue_text(tok, model, enc, cache, gen_len=gen_len, top_k=top_k)
-        kv16 = continue_text(tok, model, enc, cache, gen_len=gen_len, top_k=top_k, bits=bits_list[0])
-        ae16 = continue_text(tok, model, enc,
+        kv   = continue_text(tok, model, enc, cache, gen_len=gen_len, top_k=top_k, bits=bits_list[0])
+        ae   = continue_text(tok, model, enc,
                              compress_past(cache, aes, bits_list[0]),
                              gen_len=gen_len, top_k=top_k)
-        examples.append({"prompt":prompt,"raw":raw,"kv_quant":kv16,"ae_compressed":ae16})
+        examples.append({"prompt":prompt,"raw":raw,"kv_quant":kv,"ae_compressed":ae})
     results["examples"]=examples
     results["config"]=cfg
 
