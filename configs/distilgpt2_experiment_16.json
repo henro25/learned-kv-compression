@@ -6,7 +6,7 @@
   "num_epochs": 10,
   "hidden_size": 768,
   "gradient_accumulation_steps": 2,
-  "lr": 0.05,
+  "lr": 0.01,
   "seed": 42,
   "head_dim": 64,
   "buffer_mult": 2,
