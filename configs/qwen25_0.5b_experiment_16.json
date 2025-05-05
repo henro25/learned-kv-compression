@@ -1,7 +1,7 @@
 {
   "models": ["Qwen/Qwen2.5-0.5B"],
   
-  "input_dim": 16,
+  "latent_dim": 16,
   "lr": 0.001,
   "num_epochs": 10,
   "num_train_texts": 50000,
