@@ -9,7 +9,6 @@ Run:
 for both GPT-2 style and Qwen2 family models.
 """
 
-# ─── Suppress noisy logs *before* imports ────────────────────────────────────────
 import os, warnings, logging
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["ABSL_MIN_LOG_LEVEL"]  = "3"
@@ -24,7 +23,6 @@ absl_log.set_stderrthreshold("fatal")
 from transformers.utils import logging as hf_logging
 hf_logging.set_verbosity_error()
 
-# ─── Standard imports ───────────────────────────────────────────────────────────
 import json, argparse
 import torch, torch.nn.functional as F
 from tqdm import tqdm
@@ -33,7 +31,6 @@ from transformers.cache_utils import DynamicCache
 from datasets import load_dataset
 from src.models.autoencoder import Autoencoder
 
-# ─── Logger ─────────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -46,6 +43,19 @@ def quantize_tensor(x: torch.Tensor, bits: int):
         return x
     x_q = torch.round(torch.clamp(x / m * scale, -scale, scale)) / scale
     return x_q * m
+
+def quantize_past_key_values(past, bits: int):
+    """
+    Apply bit-level quantization to each key/value tensor in `past_key_values`.
+    """
+    if bits is None:
+        return past
+    rebuilt = []
+    for (k, v) in past:
+        k_q = quantize_tensor(k, bits)
+        v_q = quantize_tensor(v, bits)
+        rebuilt.append((k_q, v_q))
+    return DynamicCache.from_legacy_cache(tuple(rebuilt))
 
 def resolve_dims(cfg):
     if hasattr(cfg, "num_hidden_layers"):
@@ -99,7 +109,11 @@ def top_k_logits(logits: torch.Tensor, k: int = 50) -> torch.Tensor:
     out.scatter_(-1, idx, v)
     return out
 
-def continue_text(tokenizer, model, enc, past, gen_len=20, top_k=50, temp=1.0):
+def continue_text(tokenizer, model, enc, past, gen_len=20, top_k=50, temp=1.0, bits=None):
+    """
+    If bits is not None, we quantize the 'past' between each step for the
+    KV-baseline and AE-compressed generations alike.
+    """
     ids  = enc.input_ids.clone()
     pos  = ids.size(1)
     last = ids[:, -1:].to(model.device)
@@ -116,12 +130,17 @@ def continue_text(tokenizer, model, enc, past, gen_len=20, top_k=50, temp=1.0):
                 use_cache=True,
             )
         logits, past = out.logits[:, -1, :], out.past_key_values
+
+        # apply quantization to the cached KV if requested
+        past = quantize_past_key_values(past, bits)
+
         filt   = top_k_logits(logits / temp, top_k)
         probs  = torch.softmax(filt, dim=-1)
         nxt    = torch.multinomial(probs, num_samples=1)
-        ids    = torch.cat([ids, nxt], dim=-1)
-        last   = nxt
-        pos   += 1
+
+        ids  = torch.cat([ids, nxt], dim=-1)
+        last = nxt
+        pos += 1
 
     return tokenizer.decode(ids[0], skip_special_tokens=True)
 
@@ -145,17 +164,17 @@ def calculate_perplexity(model, tokenizer, texts, max_length=1024, desc="Raw bas
 
             loss   = loss_fct(logits.view(-1, logits.size(-1)),
                               labels.view(-1))
-            valid  = int(mask.view(-1).sum().item())
             total_loss  += (loss * mask.view(-1)).sum().item()
-            total_tokens += valid
+            total_tokens += int(mask.view(-1).sum().item())
 
     logger.info(f"[{desc}] valid tokens = {total_tokens}")
-    if total_tokens == 0:
-        logger.warning(f"[{desc}] no valid tokens, returning NaN")
-        return float("nan")
-    return torch.exp(torch.tensor(total_loss / total_tokens)).item()
+    return float("nan") if total_tokens==0 else torch.exp(torch.tensor(total_loss/total_tokens)).item()
 
 def evaluate_with_kv_quant(model, tokenizer, texts, max_length=1024, bits=None):
+    """
+    Identical to your old KV baseline, except we now quantize the past
+    with bits if provided—so the cache is directly degraded.
+    """
     model.eval()
     total_loss, total_tokens = 0.0, 0
     loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
@@ -172,22 +191,21 @@ def evaluate_with_kv_quant(model, tokenizer, texts, max_length=1024, bits=None):
             for t in range(ids.size(1)-1):
                 if not mask[0, t+1]:
                     continue
-                out = model(
+                out  = model(
                     input_ids=ids[:, t:t+1],
                     attention_mask=mask[:, t:t+1],
                     past_key_values=past,
                     use_cache=True,
                 )
-                past      = out.past_key_values
-                loss_val  = loss_fct(out.logits[:, -1, :], ids[:, t+1])
+                loss_val = loss_fct(out.logits[:, -1, :], ids[:, t+1])
                 total_loss  += loss_val.item()
                 total_tokens += 1
 
+                # quantize the new cache if requested
+                past = quantize_past_key_values(out.past_key_values, bits)
+
     logger.info(f"[KV-cache baseline] valid tokens = {total_tokens}")
-    if total_tokens == 0:
-        logger.warning("[KV-cache baseline] no valid tokens, returning NaN")
-        return float("nan")
-    return torch.exp(torch.tensor(total_loss / total_tokens)).item()
+    return float("nan") if total_tokens==0 else torch.exp(torch.tensor(total_loss/total_tokens)).item()
 
 def evaluate_with_compressed_cache(model, tokenizer, aes, texts, max_length=1024, bits=None):
     model.eval()
@@ -206,38 +224,21 @@ def evaluate_with_compressed_cache(model, tokenizer, aes, texts, max_length=1024
             for t in range(ids.size(1)-1):
                 if not mask[0, t+1]:
                     continue
-                out       = model(
+                out  = model(
                     input_ids=ids[:, t:t+1],
                     attention_mask=mask[:, t:t+1],
                     past_key_values=past,
                     use_cache=True,
                 )
-                past      = compress_kv_cache(out.past_key_values, aes, bits)
-                loss_val  = loss_fct(out.logits[:, -1, :], ids[:, t+1])
+                # compress via AE + quant
+                past = compress_kv_cache(out.past_key_values, aes, bits)
+
+                loss_val = loss_fct(out.logits[:, -1, :], ids[:, t+1])
                 total_loss  += loss_val.item()
                 total_tokens += 1
 
     logger.info(f"[AE-compressed KV] valid tokens = {total_tokens}")
-    if total_tokens == 0:
-        logger.warning("[AE-compressed KV] no valid tokens, returning NaN")
-        return float("nan")
-    return torch.exp(torch.tensor(total_loss / total_tokens)).item()
-
-def evaluate_longbench(model, tokenizer, aes, cfg, bits=None):
-    subsets = ['narrativeqa','hotpotqa','2wikimqa','musique','dureader']
-    out = {"baseline":{}, "compressed":{}}
-    n_eval = cfg.get("num_eval_texts")
-
-    for s in subsets:
-        data  = load_dataset("THUDM/LongBench", s, trust_remote_code=True)["test"]["input"]
-        texts = [x for x in data if x.strip()][:n_eval or None]
-        out["baseline"][s]   = calculate_perplexity(
-                                model, tokenizer, texts,
-                                cfg["max_seq_len"], f"PPL {s}")
-        out["compressed"][s] = evaluate_with_compressed_cache(
-                                model, tokenizer, aes, texts,
-                                cfg["max_seq_len"], bits)
-    return out
+    return float("nan") if total_tokens==0 else torch.exp(torch.tensor(total_loss/total_tokens)).item()
 
 # ─── Main runner ───────────────────────────────────────────────────────────────
 def run_benchmark(model_name, ae_path, lat_dim, out_dir, cfg):
