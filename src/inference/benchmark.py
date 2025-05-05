@@ -40,6 +40,15 @@ logger = logging.getLogger(__name__)
 
 # ─────────────────────────── Utility helpers ───────────────────────────────────
 
+def _max_positions(model):
+    """Return the model's max position IDs (GPT‑2, OPT, Qwen all differ)."""
+    if hasattr(model.config, "n_positions"):
+        return model.config.n_positions
+    if hasattr(model.config, "max_position_embeddings"):
+        return model.config.max_position_embeddings
+    return 1024  # sensible default
+
+
 def quantize_tensor(x: torch.Tensor, bits: int):
     """Uniform symmetric quantisation to the given bit‑width."""
     scale = 2 ** (bits - 1) - 1
@@ -77,8 +86,7 @@ def compress_kv_cache(past, aes, bits=None):
         B, H, S, D = k.shape
         k_flat, v_flat = k.view(-1, D), v.view(-1, D)
         with torch.no_grad():
-            k_lat = ae.encoder(k_flat)
-            v_lat = ae.encoder(v_flat)
+            k_lat, v_lat = ae.encoder(k_flat), ae.encoder(v_flat)
             if bits is not None:
                 k_lat, v_lat = quantize_tensor(k_lat, bits), quantize_tensor(v_lat, bits)
             k_rec = ae.decoder(k_lat).view(B, H, S, D)
@@ -93,7 +101,7 @@ def prompt_cache(tokenizer, model, prompt: str):
         prompt,
         return_tensors="pt",
         truncation=True,
-        max_length=model.config.n_positions,
+        max_length=_max_positions(model),
     ).to(model.device)
     with torch.no_grad():
         out = model(**enc, use_cache=True)
@@ -164,6 +172,7 @@ def calculate_perplexity(model, tokenizer, texts, max_length=1024, desc="Raw bas
             total_loss += (loss * mask.view(-1)).sum().item()
             total_tokens += int(mask.sum())
 
+    logger.info(f"[{desc}] valid tokens = {total_tokens}")
     return float("nan") if total_tokens == 0 else torch.exp(torch.tensor(total_loss / total_tokens)).item()
 
 
@@ -188,6 +197,7 @@ def evaluate_with_kv_quant(model, tokenizer, texts, *, max_length=1024, bits=Non
                 total_tokens += 1
                 past = quantize_past_key_values(out.past_key_values, bits)
 
+    logger.info(f"[KV‑cache baseline] valid tokens = {total_tokens}")
     return float("nan") if total_tokens == 0 else torch.exp(torch.tensor(total_loss / total_tokens)).item()
 
 
@@ -212,6 +222,7 @@ def evaluate_with_compressed_cache(model, tokenizer, aes, texts, *, max_length=1
                 total_loss += loss_val.item()
                 total_tokens += 1
 
+    logger.info(f"[AE‑compressed KV] valid tokens = {total_tokens}")
     return float("nan") if total_tokens == 0 else torch.exp(torch.tensor(total_loss / total_tokens)).item()
 
 
@@ -224,33 +235,35 @@ def evaluate_longbench(model, tokenizer, aes, cfg, bits=None):
         data = load_dataset("THUDM/LongBench", s, trust_remote_code=True)["test"]["input"]
         texts = [x for x in data if x.strip()][: n_eval or None]
         out["baseline"][s] = calculate_perplexity(model, tokenizer, texts, cfg["max_seq_len"], f"PPL {s}")
-        out["compressed"][s] = evaluate_with_compressed_cache(model, tokenizer, aes, texts, max_length=cfg["max_seq_len"], bits=bits)
+        out["compressed"][s] = evaluate_with_compressed_cache(
+            model, tokenizer, aes, texts, max_length=cfg["max_seq_len"], bits=bits
+        )
     return out
 
 
 # ─────────────────────────── Main benchmark driver ─────────────────────────────
 
-def run_benchmark(model_name, ae_path, lat_dim, out_dir, cfg):
+def run_benchmark(cfg: dict):
     device = torch.device(cfg.get("device", "cuda"))
     dtype = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}[cfg.get("dtype", "fp32")]
 
     # --- model & tokenizer ------------------------------------------------------
-    tok = AutoTokenizer.from_pretrained(model_name)
+    tok = AutoTokenizer.from_pretrained(cfg["model_name"])
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
         tok.pad_token_id = tok.eos_token_id
 
     model = AutoModelForCausalLM.from_pretrained(
-        model_name, torch_dtype=dtype, device_map={"": device}, use_cache=True
+        cfg["model_name"], torch_dtype=dtype, device_map={"": device}, use_cache=True
     )
     model.config.pad_token_id = tok.pad_token_id
 
     # --- autoencoders ----------------------------------------------------------
     n_layers, _, head_dim = resolve_dims(model.config)
-    ckpt = torch.load(ae_path, map_location=device) if os.path.exists(ae_path) else None
+    ckpt = torch.load(cfg["autoencoder_path"], map_location=device) if os.path.exists(cfg["autoencoder_path"]) else None
     aes = []
     for i in range(n_layers):
-        ae = Autoencoder(input_dim=head_dim, latent_dim=lat_dim, dtype=dtype).to(device)
+        ae = Autoencoder(input_dim=head_dim, latent_dim=cfg["latent_dim"], dtype=dtype).to(device)
         if ckpt:
             ae.load_state_dict(ckpt[f"layer_{i}"])
         ae.eval()
@@ -290,15 +303,21 @@ def run_benchmark(model_name, ae_path, lat_dim, out_dir, cfg):
         examples.append({"prompt": prompt, "raw_baseline": raw_out, "kv_baseline": kv_out, "ae_compressed": ae_out})
 
     # --- write results ---------------------------------------------------------
-    os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "benchmark_results.json"), "w") as f:
+    os.makedirs(cfg["output_dir"], exist_ok=True)
+    with open(os.path.join(cfg["output_dir"], "benchmark_results.json"), "w") as f:
         json.dump(
-            {"raw_baseline_ppl": raw_ppl, "perplexities": ppl_summary, "longbench": longbench, "examples": examples, "config": cfg},
+            {
+                "raw_baseline_ppl": raw_ppl,
+                "perplexities": ppl_summary,
+                "longbench": longbench,
+                "examples": examples,
+                "config": cfg,
+            },
             f,
             indent=2,
         )
 
-    print(f"✅ Saved results to {out_dir}/benchmark_results.json")
+    print(f"✅ Saved results to {cfg['output_dir']}/benchmark_results.json")
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -306,4 +325,4 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="KV‑cache benchmark")
     parser.add_argument("--config", required=True, help="Path to JSON config file")
     args = parser.parse_args()
-    run_benchmark(**json.load(open(args.config)))
+    run_benchmark(json.load(open(args.config)))
