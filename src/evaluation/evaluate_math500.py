@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
 """
-evaluate_math500.py  –  run baseline + AE‑compressed KV on MATH‑500
-using a single config JSON (same schema as your WikiText benchmarks).
+evaluate_math500.py
+───────────────────
+Evaluate baseline + AE‑compressed KV‑cache models on the 500‑problem
+MATH subset, driven by your standard JSON config.
 """
 
 import argparse, json, importlib.util
 from pathlib import Path
 
-# ── helper to register / overwrite math500 task ───────────────────────────────
-def ensure_math500_registered():
-    import lm_eval, textwrap
+# ── 1  register pure‑Python task (no YAML) ─────────────────────────────────────
+def ensure_math500_task():
+    import lm_eval
     task_dir = Path(lm_eval.__file__).parent / "tasks" / "math500"
-    task_dir.mkdir(parents=True, exist_ok=True)   # always rewrite YAML
-    (task_dir / "task.yaml").write_text(textwrap.dedent("""\
-        task: math500
-        dataset_path: HuggingFaceH4/MATH-500
-        output_type: generation
-        doc_to_text: "Problem: {{problem}}\\nAnswer:"
-        doc_to_target: "{{answer}}"
-        metrics: [ exact_match ]
-    """))
-    print("✓ math500 task YAML refreshed (no deprecated keys)")
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "__init__.py").write_text(
+        "from lm_eval.tasks.hendrycks_math import HendrycksMath\n"
+        "class Math500(HendrycksMath):\n"
+        "    DATASET_PATH = 'HuggingFaceH4/MATH-500'\n"
+    )
+    print("✓ math500 Python task refreshed")
 
-# ── dynamic wrapper that injects compress_past() ──────────────────────────────
+# ── 2  dynamic wrapper that compresses the KV cache ────────────────────────────
 def build_wrapper(model_name, latent_dim, bits, ae_ckpt):
     from lm_eval.models.huggingface import HFCausalLM
     spec = importlib.util.spec_from_file_location("benchmark", "./benchmark.py")
@@ -43,21 +42,21 @@ def build_wrapper(model_name, latent_dim, bits, ae_ckpt):
             return out
     return HFAECompressed
 
-# ── main ───────────────────────────────────────────────────────────────────────
+# ── 3  main driver ─────────────────────────────────────────────────────────────
 def main():
-    ap = argparse.ArgumentParser(description="Evaluate MATH‑500 accuracy with KV compression")
+    ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     cfg = json.load(open(ap.parse_args().config))
 
-    model_name = cfg["model_name"]
-    ae_ckpt    = cfg["autoencoder_path"]
-    latent_dim = cfg["latent_dim"]
-    bits_list  = cfg["quantization_bits"]
-    out_dir    = Path(cfg["output_dir"]); out_dir.mkdir(parents=True, exist_ok=True)
-    batch_size = cfg.get("batch_size", 4)
-    device     = cfg.get("device", "cuda")
+    model_name  = cfg["model_name"]
+    ae_ckpt     = cfg["autoencoder_path"]
+    latent_dim  = cfg["latent_dim"]
+    bits_list   = cfg["quantization_bits"]
+    out_dir     = Path(cfg["output_dir"]); out_dir.mkdir(parents=True, exist_ok=True)
+    batch_size  = cfg.get("batch_size", 4)
+    device      = cfg.get("device", "cuda")
 
-    ensure_math500_registered()
+    ensure_math500_task()
     from lm_eval import evaluator
 
     # baseline
@@ -79,7 +78,8 @@ def main():
         print(f"\n▶ Compressed : latent={latent_dim}  bits={bits}")
         Wrapper = build_wrapper(model_name, latent_dim, bits, ae_ckpt)
         res = evaluator.simple_evaluate(
-            model=Wrapper, model_args="",
+            model=Wrapper,
+            model_args="",
             tasks=["math500"],
             batch_size=batch_size,
             device=device,
