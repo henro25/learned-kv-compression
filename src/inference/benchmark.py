@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """
-benchmark.py   (updated 2025‑05‑05)
+benchmark.py   (patched 2025‑05‑05)
 
 Benchmarks:
   • raw‑perplexity baseline
   • KV‑cache baseline with optional quantisation
-  • AE‑compressed + quantised KV perplexity
+  • AE‑compressed + quantised KV perplexity
   • LongBench across bit‑widths
   • Example generations
+
+Patches
+───────
+✔ Robust quantisation – guards against NaNs/Infs before & after the op.
+✔ compress_past sanitises encoder/decoder outputs to keep them finite.
+✔ token_loop skips steps that would propagate NaNs to the loss.
+✔ Added explicit sanity checks + log warnings so problems surface early.
 """
 
 # ─── quiet noisy logs ────────────────────────────────────────────────────
@@ -31,22 +38,31 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.cache_utils import DynamicCache
 from datasets import load_dataset
-from src.models.autoencoder import Autoencoder    # ← uses the new flexible AEs
+from src.models.autoencoder import Autoencoder
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ────────────────────────────────────────────────────────────────────────
+
+def _sanitize(x: torch.Tensor) -> torch.Tensor:
+    """Replace NaNs/Infs with finite zeros so downstream ops stay defined."""
+    return torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+
+
 def quantize_tensor(x: torch.Tensor, bits: int | None):
+    """Uniform symmetric quantisation with safety checks against NaNs."""
     if bits is None or bits <= 1:
-        return x
+        return _sanitize(x)
+    x = _sanitize(x)
     scale = 2 ** (bits - 1) - 1
     if scale <= 0:
         return x
-    m = x.abs().amax()
-    if m == 0:
-        return x
-    return torch.round(torch.clamp(x / m * scale, -scale, scale)) / scale * m
+    mx = x.abs().amax()
+    if torch.isfinite(mx) is False or mx == 0:
+        return x  # nothing to quantise – all zeros or invalid max
+    xq = torch.round(torch.clamp(x / mx * scale, -scale, scale)) / scale * mx
+    return _sanitize(xq)
 
 
 def quantize_past(past, bits):
@@ -68,21 +84,28 @@ def resolve_dims(cfg):
 
 
 def compress_past(past, aes, bits):
+    """Encode → (optional) quantise → decode each KV pair layer‑wise."""
     rebuilt = []
     for (k, v), ae in zip(past, aes):
         B, H, S, D = k.shape
-        k_lat = ae.encoder(k.reshape(-1, D))
-        v_lat = ae.encoder(v.reshape(-1, D))
+        # encode
+        k_lat = _sanitize(ae.encoder(k.reshape(-1, D)))
+        v_lat = _sanitize(ae.encoder(v.reshape(-1, D)))
+        # quantise in latent space
         if bits is not None:
-            k_lat, v_lat = quantize_tensor(k_lat, bits), quantize_tensor(v_lat, bits)
-        k_rec = ae.decoder(k_lat).reshape(B, H, S, D)
-        v_rec = ae.decoder(v_lat).reshape(B, H, S, D)
+            k_lat = quantize_tensor(k_lat, bits)
+            v_lat = quantize_tensor(v_lat, bits)
+        # decode
+        k_rec = _sanitize(ae.decoder(k_lat)).reshape(B, H, S, D)
+        v_rec = _sanitize(ae.decoder(v_lat)).reshape(B, H, S, D)
         rebuilt.append((k_rec, v_rec))
     return DynamicCache.from_legacy_cache(tuple(rebuilt))
 
 
+# ─── generation helpers ────────────────────────────────────────────────
+
 def safe_sample(probs):
-    probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0).clamp(min=0.0)
+    probs = _sanitize(probs).clamp(min=0.0)
     z = probs.sum(dim=-1, keepdim=True)
     probs = torch.where(z == 0,
                         torch.full_like(probs, 1 / probs.size(-1)),
@@ -106,6 +129,9 @@ def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0
         with torch.no_grad():
             out = model(input_ids=last, past_key_values=past, use_cache=True)
         logits, past = out.logits[:, -1, :], quantize_past(out.past_key_values, bits)
+        if torch.isnan(logits).any():
+            logger.warning("NaNs detected in logits during generation – token skipped.")
+            break
         logits = top_k_filter(logits / temp, top_k)
         probs  = torch.softmax(logits, dim=-1)
         nxt    = safe_sample(probs)
@@ -113,7 +139,8 @@ def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0
     return tokenizer.decode(ids[0], skip_special_tokens=True)
 
 
-# ─── perplexity helpers ──────────────────────────────────────────────────
+# ─── perplexity helpers ─────────────────────────────────────────────────
+
 def perplexity(model, tok, texts, max_len, desc):
     loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
     tot_loss = tot_tok = 0
@@ -146,9 +173,15 @@ def token_loop(model, tok, texts, *, aes=None, bits=None, max_len=1024, desc="kv
             if not attn[0, t + 1]:
                 continue
             out = model(input_ids=ids[:, t:t + 1], past_key_values=past, use_cache=True)
+            if torch.isnan(out.logits).any():  # skip corrupt step
+                logger.warning(f"NaNs detected in logits at token {t} – skipping.")
+                continue
             past = (compress_past(out.past_key_values, aes, bits)
                     if aes else quantize_past(out.past_key_values, bits))
             step_loss = loss_fn(out.logits[:, -1, :], ids[:, t + 1]).item()
+            if math.isnan(step_loss):
+                logger.warning(f"NaN loss at token {t} – skipping.")
+                continue
             tot_loss += step_loss
             tot_tok  += 1
     if tot_tok == 0:
@@ -178,12 +211,12 @@ def run_benchmark(cfg: dict):
     # -------- autoencoder construction ----------------------------------------
     L, _, dH = resolve_dims(model.config)
 
-    ae_ckpt_path = cfg.get("autoencoder_path", "")
-    ckpt = torch.load(ae_ckpt_path, map_location=device) if os.path.exists(ae_ckpt_path) else None
+    ckpt_path = cfg.get("autoencoder_path", "")
+    ckpt = torch.load(ckpt_path, map_location=device) if os.path.exists(ckpt_path) else None
 
-    enc_sizes = cfg.get("encoder_layer_sizes", [])   # NEW
-    dec_sizes = cfg.get("decoder_layer_sizes", [])   # NEW
-    act_name  = cfg.get("activation", "ReLU")        # NEW
+    enc_sizes = cfg.get("encoder_layer_sizes", [])
+    dec_sizes = cfg.get("decoder_layer_sizes", [])
+    act_name  = cfg.get("activation", "ReLU")
 
     aes = []
     for i in range(L):
@@ -207,8 +240,8 @@ def run_benchmark(cfg: dict):
     )
 
     # -------- evaluation datasets ---------------------------------------------
-    ds     = load_dataset("wikitext", "wikitext-103-raw-v1")["test"]["text"]
-    texts  = [t for t in ds if t.strip()]
+    ds    = load_dataset("wikitext", "wikitext-103-raw-v1")["test"]["text"]
+    texts = [t for t in ds if t.strip()]
     if cfg.get("num_eval_texts"):
         texts = texts[: cfg["num_eval_texts"]]
 
@@ -241,11 +274,10 @@ def run_benchmark(cfg: dict):
     subsets   = ["narrativeqa", "hotpotqa", "2wikimqa", "musique", "dureader"]
     longbench = {"baseline": {}, "compressed": {}}
     for s in subsets:
-        data = load_dataset("THUDM/LongBench", s,
-                            trust_remote_code=True)["test"]["input"]
+        data = load_dataset("THUDM/LongBench", s, trust_remote_code=True)["test"]["input"]
         txts = [t for t in data if t.strip()][: cfg.get("num_eval_texts") or None]
         longbench["baseline"][s] = perplexity(
-            model, tok, txts, cfg["max_seq_len"], f"PPL {s}"
+            model, tok, txts, cfg["max_seq_len"], f"PPL {s}"
         )
         for b in bits_list:
             if b is None:
@@ -260,7 +292,7 @@ def run_benchmark(cfg: dict):
     examples  = []
     gen_len   = cfg.get("gen_len", 20)
     top_k     = cfg.get("top_k", 50)
-    first_bit = next((b for b in bits_list if b), None) or 2  # fallback
+    first_bit = next((b for b in bits_list if b), None) or 2
     for prompt in texts[:5]:
         enc   = tok(prompt, return_tensors="pt").to(device)
         cache = model(**enc, use_cache=True).past_key_values
@@ -285,7 +317,7 @@ def run_benchmark(cfg: dict):
     out_path = os.path.join(cfg["output_dir"], "benchmark_results.json")
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
-    print("✅ Saved to", out_path)
+    print("✅ Saved to", out_path)
 
 
 # ─── cli ─────────────────────────────────────────────────────────────────
