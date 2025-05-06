@@ -1,43 +1,93 @@
 """
 Module Name: autoencoder.py
-Description: This module defines an Autoencoder model, which consists of an encoder that reduces the dimensionality of the input vector to a latent representation, and a decoder that reconstructs the original input from the latent representation.
-Author: Henry Huang
-Date: 2025-03-13
+Description: A configurable MLP Autoencoder whose encoder/decoder depths
+             and hidden sizes are specified at run‑time.
+Author: Henry Huang  • Last updated: 2025‑05‑05
 """
 
+from typing import Sequence, Iterable, Type
 import torch
 import torch.nn as nn
 
+
+def _build_mlp(
+    dims: Iterable[int],
+    act_cls: Type[nn.Module]
+) -> nn.Sequential:
+    """
+    dims : e.g. [in, 256, 128, 64]  → Linear(in→256)+Act → Linear(256→128)+Act …
+           The **last** Linear has **no** activation.
+    """
+    layers: list[nn.Module] = []
+    it = iter(dims)
+    prev = next(it)
+    for d in it:
+        layers.append(nn.Linear(prev, d))
+        prev = d
+        # no activation after the very last Linear
+        if prev != dims[-1]:
+            layers.append(act_cls())
+    return nn.Sequential(*layers)
+
+
 class Autoencoder(nn.Module):
-    def __init__(self, input_dim, latent_dim, dtype=None):
-        super(Autoencoder, self).__init__()
-        # Encoder: compress from input_dim to latent_dim.
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, latent_dim),
-            nn.ReLU()
-        )
-        # Decoder: reconstruct from latent_dim to input_dim.
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, input_dim)
-        )
-        
-        # Convert model parameters to specified dtype if provided
+    """
+    Args
+    ----
+    input_dim  : dimensionality of each KV vector.
+    latent_dim : size of compressed representation.
+    encoder_layer_sizes : Sequence[int] – hidden sizes *between*
+                          input_dim and latent_dim **not including either**.
+                          [] or None  ⇒ single Linear(input_dim→latent_dim)
+    decoder_layer_sizes : Sequence[int] – hidden sizes *between*
+                          latent_dim and input_dim **not including either**.
+    activation          : str – any torch.nn activation name, default "ReLU".
+    dtype               : torch dtype for parameters & forward tensors.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        latent_dim: int,
+        encoder_layer_sizes: Sequence[int] | None = None,
+        decoder_layer_sizes: Sequence[int] | None = None,
+        activation: str = "ReLU",
+        dtype: torch.dtype | None = None,
+    ):
+        super().__init__()
+
+        act_cls: Type[nn.Module] = getattr(nn, activation)
+
+        enc_dims = [input_dim] + list(encoder_layer_sizes or []) + [latent_dim]
+        dec_dims = [latent_dim] + list(decoder_layer_sizes or []) + [input_dim]
+
+        self.encoder = _build_mlp(enc_dims, act_cls)
+        self.decoder = _build_mlp(dec_dims, act_cls)
+
         if dtype is not None:
             self.to(dtype)
-    
-    def forward(self, x):
-        # Ensure input and model parameters use the same dtype
+
+    # -----------------------------------------------------
+
+    def forward(self, x: torch.Tensor):
         device = next(self.parameters()).device
-        dtype = next(self.parameters()).dtype
-        x = x.to(device=device, dtype=dtype)
-        
-        z = self.encoder(x)
-        x_recon = self.decoder(z)
+        dtype  = next(self.parameters()).dtype
+        x      = x.to(device=device, dtype=dtype)
+
+        z        = self.encoder(x)
+        x_recon  = self.decoder(z)
         return x_recon, z
 
+
+# ───── quick smoke‑test ─────────────────────────────────
 if __name__ == "__main__":
-    # Quick test
-    model = Autoencoder(input_dim=64, latent_dim=16)
-    sample = torch.randn(10, 64)
-    recon, z = model(sample)
-    print("Reconstruction shape:", recon.shape)
+    ae = Autoencoder(
+        input_dim=64,
+        latent_dim=8,
+        encoder_layer_sizes=[128, 32],
+        decoder_layer_sizes=[32, 128],
+        activation="GELU"
+    )
+    dummy = torch.randn(4, 64)
+    rec, z = ae(dummy)
+    print("latent:", z.shape, "recon:", rec.shape)

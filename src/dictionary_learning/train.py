@@ -32,9 +32,15 @@ from transformers import (
 from src.models.autoencoder import Autoencoder
 from src.utils.buffer import Buffer
 
-def load_config(config_path):
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+def load_config(path: str):
+    with open(path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    # ── set sensible defaults for new keys ───────────────
+    cfg.setdefault("encoder_layer_sizes", [])   # means 1‑layer encoder
+    cfg.setdefault("decoder_layer_sizes", [])
+    cfg.setdefault("activation", "ReLU")
+    return cfg
 
 def parse_args():
     import argparse
@@ -93,8 +99,16 @@ def main(cfg):
 
     # prepare autoencoders
     head_dim = cfg["hidden_size"] // cfg["num_attention_heads"]
+    
     autoencoders = nn.ModuleList([
-        Autoencoder(input_dim=head_dim, latent_dim=cfg["latent_dim"], dtype=dtype).to(cfg["device"])
+        Autoencoder(
+            input_dim=head_dim,
+            latent_dim=cfg["latent_dim"],
+            encoder_layer_sizes=cfg["encoder_layer_sizes"],
+            decoder_layer_sizes=cfg["decoder_layer_sizes"],
+            activation=cfg.get("activation", "ReLU"),
+            dtype=dtype,
+        ).to(cfg["device"])
         for _ in range(cfg["num_hidden_layers"])
     ])
 
