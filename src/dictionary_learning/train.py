@@ -269,7 +269,7 @@ def main(cfg):
                 _, attn_rec  = compute_attention(queries, k_rec, v_rec)
                 attn_loss = F.mse_loss(attn_rec, attn_orig)
 
-                val_totals.append(kv_loss.item() * 1 + attn_loss.item()) * 0
+                val_totals.append(kv_loss.item() * 1 + attn_loss.item() * 0)
                 val_kvs.append(kv_loss.item())
                 val_attns.append(attn_loss.item())
 
