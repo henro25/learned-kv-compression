@@ -1,47 +1,57 @@
 """
 Module Name: autoencoder.py
-Description: A configurable MLP Autoencoder whose encoder/decoder depths
-             and hidden sizes are specified at run‑time.
-Author: Henry Huang  • Last updated: 2025‑05‑05
+Description: A configurable MLP Autoencoder with optional normalization layers
+             (LayerNorm or BatchNorm) to improve generalization.
+Author: Henry Huang
+Last updated: 2025‑05‑06
 """
 
-from typing import Sequence, Iterable, Type
+from typing import Sequence, Iterable, Type, Optional
 import torch
 import torch.nn as nn
 
 
 def _build_mlp(
     dims: Iterable[int],
-    act_cls: Type[nn.Module]
+    act_cls: Type[nn.Module],
+    norm_cls: Optional[Type[nn.Module]] = None,
 ) -> nn.Sequential:
-    """
-    dims : e.g. [in, 256, 128, 64]  → Linear(in→256)+Act → Linear(256→128)+Act …
-           The **last** Linear has **no** activation.
+    """Helper to build an MLP.
+
+    Args
+    ----
+    dims     : e.g. [in, 256, 128, 64]
+               → Linear(in→256) + (Norm) + Act → Linear(256→128) + (Norm) + Act …
+               The **last** Linear has **no** normalization or activation.
+    act_cls  : activation module class (e.g. nn.ReLU).
+    norm_cls : normalization module class (e.g. nn.LayerNorm / nn.BatchNorm1d) or None.
     """
     layers: list[nn.Module] = []
     it = iter(dims)
     prev = next(it)
     for d in it:
         layers.append(nn.Linear(prev, d))
-        prev = d
-        # no activation after the very last Linear
-        if prev != dims[-1]:
+        is_last = (d == dims[-1])
+        if not is_last:
+            if norm_cls is not None:
+                # LayerNorm expects normalized_shape, BatchNorm1d expects num_features
+                layers.append(norm_cls(d))
             layers.append(act_cls())
+        prev = d
     return nn.Sequential(*layers)
 
 
 class Autoencoder(nn.Module):
-    """
+    """Configurable MLP Autoencoder.
+
     Args
     ----
-    input_dim  : dimensionality of each KV vector.
-    latent_dim : size of compressed representation.
-    encoder_layer_sizes : Sequence[int] – hidden sizes *between*
-                          input_dim and latent_dim **not including either**.
-                          [] or None  ⇒ single Linear(input_dim→latent_dim)
-    decoder_layer_sizes : Sequence[int] – hidden sizes *between*
-                          latent_dim and input_dim **not including either**.
-    activation          : str – any torch.nn activation name, default "ReLU".
+    input_dim           : dimensionality of each KV vector.
+    latent_dim          : size of compressed representation.
+    encoder_layer_sizes : hidden sizes *between* input_dim and latent_dim.
+    decoder_layer_sizes : hidden sizes *between* latent_dim and input_dim.
+    activation          : name of activation in ``torch.nn`` (default "ReLU").
+    norm_type           : "LayerNorm", "BatchNorm1d", or ``None``. Default "LayerNorm".
     dtype               : torch dtype for parameters & forward tensors.
     """
 
@@ -52,17 +62,19 @@ class Autoencoder(nn.Module):
         encoder_layer_sizes: Sequence[int] | None = None,
         decoder_layer_sizes: Sequence[int] | None = None,
         activation: str = "ReLU",
+        norm_type: str | None = "LayerNorm",
         dtype: torch.dtype | None = None,
     ):
         super().__init__()
 
         act_cls: Type[nn.Module] = getattr(nn, activation)
+        norm_cls: Optional[Type[nn.Module]] = getattr(nn, norm_type) if norm_type else None
 
         enc_dims = [input_dim] + list(encoder_layer_sizes or []) + [latent_dim]
         dec_dims = [latent_dim] + list(decoder_layer_sizes or []) + [input_dim]
 
-        self.encoder = _build_mlp(enc_dims, act_cls)
-        self.decoder = _build_mlp(dec_dims, act_cls)
+        self.encoder = _build_mlp(enc_dims, act_cls, norm_cls)
+        self.decoder = _build_mlp(dec_dims, act_cls, norm_cls)
 
         if dtype is not None:
             self.to(dtype)
@@ -71,11 +83,11 @@ class Autoencoder(nn.Module):
 
     def forward(self, x: torch.Tensor):
         device = next(self.parameters()).device
-        dtype  = next(self.parameters()).dtype
-        x      = x.to(device=device, dtype=dtype)
+        dtype = next(self.parameters()).dtype
+        x = x.to(device=device, dtype=dtype)
 
-        z        = self.encoder(x)
-        x_recon  = self.decoder(z)
+        z = self.encoder(x)
+        x_recon = self.decoder(z)
         return x_recon, z
 
 
@@ -86,7 +98,8 @@ if __name__ == "__main__":
         latent_dim=8,
         encoder_layer_sizes=[128, 32],
         decoder_layer_sizes=[32, 128],
-        activation="GELU"
+        activation="GELU",
+        norm_type="LayerNorm",
     )
     dummy = torch.randn(4, 64)
     rec, z = ae(dummy)

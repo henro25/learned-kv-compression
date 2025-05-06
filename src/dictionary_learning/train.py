@@ -127,13 +127,17 @@ def main(cfg):
 
     # assemble and shuffle
     all_train = [t for t in wiki["train"]["text"] if t.strip()]
-    # n_w = int(cfg["num_train_texts"] * 0.7)
-    # n_l = cfg["num_train_texts"] - n_w
+    n_w = int(cfg["num_train_texts"] * 0.7)
+    n_l = cfg["num_train_texts"] - n_w
+    # don't sample
+    train_texts = all_train[:min(n_w, len(all_train))] \
+        + [t for t in long_texts if t.strip()][:min(n_l, len(long_texts))]
+
     # train_texts = random.sample(all_train, min(n_w, len(all_train))) \
         # + random.sample([t for t in long_texts if t.strip()], min(n_l, len(long_texts)))
-    train_texts = all_train + [t for t in long_texts if t.strip()]
+    # train_texts = all_train + [t for t in long_texts if t.strip()]
 
-    random.shuffle(train_texts)
+    # random.shuffle(train_texts)
 
     # split out validation
     val_size = int(len(train_texts) * cfg.get("val_split", 0.1))
