@@ -130,7 +130,7 @@ def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0
             out = model(input_ids=last, past_key_values=past, use_cache=True)
         logits, past = out.logits[:, -1, :], quantize_past(out.past_key_values, bits)
         if torch.isnan(logits).any():
-            logger.warning("NaNs detected in logits during generation – token skipped.")
+            # logger.warning("NaNs detected in logits during generation – token skipped.")
             break
         logits = top_k_filter(logits / temp, top_k)
         probs  = torch.softmax(logits, dim=-1)
@@ -174,7 +174,7 @@ def token_loop(model, tok, texts, *, aes=None, bits=None, max_len=1024, desc="kv
                 continue
             out = model(input_ids=ids[:, t:t + 1], past_key_values=past, use_cache=True)
             if torch.isnan(out.logits).any():  # skip corrupt step
-                logger.warning(f"NaNs detected in logits at token {t} – skipping.")
+                # logger.warning(f"NaNs detected in logits at token {t} – skipping.")
                 continue
             past = (compress_past(out.past_key_values, aes, bits)
                     if aes else quantize_past(out.past_key_values, bits))
