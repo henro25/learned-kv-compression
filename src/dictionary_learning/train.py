@@ -213,7 +213,7 @@ def main(cfg):
             _, attn_rec  = compute_attention(queries, k_rec, v_rec)
             attn_loss = F.mse_loss(attn_rec, attn_orig)
 
-            total_loss = kv_loss * 0 + attn_loss * 1
+            total_loss = kv_loss * 1 + attn_loss * 0
             (total_loss / cfg["gradient_accumulation_steps"]).backward()
 
             if ((step + 1) % cfg["gradient_accumulation_steps"] == 0) or (step + 1 == batches_per_epoch):
@@ -269,7 +269,7 @@ def main(cfg):
                 _, attn_rec  = compute_attention(queries, k_rec, v_rec)
                 attn_loss = F.mse_loss(attn_rec, attn_orig)
 
-                val_totals.append(kv_loss.item() + cfg["attn_loss_weight"] * attn_loss.item())
+                val_totals.append(kv_loss.item() * 1 + attn_loss.item()) * 0
                 val_kvs.append(kv_loss.item())
                 val_attns.append(attn_loss.item())
 
