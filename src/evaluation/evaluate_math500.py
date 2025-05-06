@@ -110,19 +110,25 @@ def generate_with_compression(model, tokenizer, prompt, compressor=None, max_len
 
 def evaluate_model(model, tokenizer, problems, solutions, compressor=None, max_length=512, top_k=50, temperature=1.0):
     """Evaluate the model on MATH-500 problems and compute exact-match accuracy with progress bar."""
-    outputs = []
-    for prompt in tqdm(problems, desc="Evaluating prompts", unit="prompt"):
+    results = []
+    for prompt, true_solution in tqdm(zip(problems, solutions), total=len(problems), desc="Evaluating prompts", unit="prompt"):
         prompt_text = f"Problem: {prompt}\nSolution:"
         output = generate_with_compression(model, tokenizer, prompt_text, compressor, max_length, top_k, temperature)
-        outputs.append(output)
+        pred_answer = extract_boxed_answer(output)
+        true_answer = extract_boxed_answer(true_solution)
+        results.append({
+            "prompt": prompt_text,
+            "generated_output": output,
+            "predicted_answer": pred_answer,
+            "true_answer": true_answer,
+            "correct": pred_answer == true_answer if true_answer is not None else False
+        })
         # Clear memory
         torch.cuda.empty_cache()
         gc.collect()
-    pred_answers = [extract_boxed_answer(output) for output in outputs]
-    true_answers = [extract_boxed_answer(sol) for sol in solutions]
-    correct = [p == t for p, t in zip(pred_answers, true_answers) if t is not None]
+    correct = [r["correct"] for r in results if r["true_answer"] is not None]
     accuracy = sum(correct) / len(correct) if correct else 0.0
-    return accuracy
+    return accuracy, results
 
 # Main Function
 
@@ -146,8 +152,8 @@ def main():
 
     # Load the MATH-500 dataset
     dataset = load_dataset("HuggingFaceH4/MATH-500", split="test")
-    problems = dataset["problem"][:5]
-    solutions = dataset["solution"][:5]
+    problems = dataset["problem"][:3]
+    solutions = dataset["solution"][:3]
 
     # Load tokenizer and model with mixed precision
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -170,9 +176,12 @@ def main():
 
     # Baseline evaluation
     print(f"\n▶ Baseline: {model_name}")
-    base_acc = evaluate_model(model, tokenizer, problems, solutions, max_length=max_length, top_k=top_k, temperature=temperature)
+    base_acc, base_results = evaluate_model(model, tokenizer, problems, solutions, max_length=max_length, top_k=top_k, temperature=temperature)
     print(f"   Exact-match accuracy: {base_acc:.3f}")
-    json.dump({"accuracy": base_acc}, open(out_dir / "math500_baseline.json", "w"), indent=2)
+    json.dump({
+        "accuracy": base_acc,
+        "results": base_results
+    }, open(out_dir / "math500_baseline.json", "w"), indent=2)
 
     # Compressed evaluations
     for bits in bits_list:
@@ -180,10 +189,14 @@ def main():
         print(f"\n▶ Compressed: latent={latent_dim} bits={bits}")
         def compressor(past):
             return compress_past(past, aes, bits)
-        acc = evaluate_model(model, tokenizer, problems, solutions, compressor=compressor, max_length=max_length, top_k=top_k, temperature=temperature)
+        acc, comp_results = evaluate_model(model, tokenizer, problems, solutions, compressor=compressor, max_length=max_length, top_k=top_k, temperature=temperature)
         ratio = (64 / latent_dim) * (16 / bits)
         print(f"   Accuracy: {acc:.3f} (compression ×{ratio:.1f})")
-        json.dump({"accuracy": acc}, open(out_dir / f"math500_{tag}.json", "w"), indent=2)
+        json.dump({
+            "accuracy": acc,
+            "compression_ratio": ratio,
+            "results": comp_results
+        }, open(out_dir / f"math500_{tag}.json", "w"), indent=2)
 
 if __name__ == "__main__":
     main()
