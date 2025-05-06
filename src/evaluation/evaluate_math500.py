@@ -146,8 +146,8 @@ def main():
 
     # Load the MATH-500 dataset
     dataset = load_dataset("HuggingFaceH4/MATH-500", split="test")
-    problems = dataset["problem"][:50]
-    solutions = dataset["solution"][:50]
+    problems = dataset["problem"][:5]
+    solutions = dataset["solution"][:5]
 
     # Load tokenizer and model with mixed precision
     tokenizer = AutoTokenizer.from_pretrained(model_name)
