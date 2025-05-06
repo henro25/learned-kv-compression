@@ -127,10 +127,12 @@ def main(cfg):
 
     # assemble and shuffle
     all_train = [t for t in wiki["train"]["text"] if t.strip()]
-    n_w = int(cfg["num_train_texts"] * 0.7)
-    n_l = cfg["num_train_texts"] - n_w
-    train_texts = random.sample(all_train, min(n_w, len(all_train))) \
-                  + random.sample([t for t in long_texts if t.strip()], min(n_l, len(long_texts)))
+    # n_w = int(cfg["num_train_texts"] * 0.7)
+    # n_l = cfg["num_train_texts"] - n_w
+    # train_texts = random.sample(all_train, min(n_w, len(all_train))) \
+        # + random.sample([t for t in long_texts if t.strip()], min(n_l, len(long_texts)))
+    train_texts = all_train + [t for t in long_texts if t.strip()]
+
     random.shuffle(train_texts)
 
     # split out validation
@@ -159,7 +161,7 @@ def main(cfg):
         optimizer,
         mode='min',
         factor=cfg.get("lr_reduce_factor", 0.5),
-        patience=cfg.get("lr_patience", 2),
+        patience=cfg.get("lr_patience", 1),
         verbose=True
     )
 
