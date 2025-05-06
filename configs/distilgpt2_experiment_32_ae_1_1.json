@@ -20,9 +20,9 @@
   "lr_reduce_factor": 0.5,
   "lr_patience": 1,
   "eval_interval": 1,
-  "config": "configs/distilgpt2_experiment_16.json",
+  "config": "configs/distilgpt2_experiment_32.json",
   "output_dir": "models",
-  "num_train_texts": 25000,
+  "num_train_texts": 50000,
   "num_eval_texts": 50,
   "device": "cuda",
   "max_seq_len": 256
