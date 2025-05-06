@@ -11,6 +11,7 @@ import sys
 import random
 import json
 import pprint
+import math
 
 import numpy as np
 import torch
@@ -216,15 +217,24 @@ def main(cfg):
                 B, L, H, S, D = keys.shape
                 k_rec = torch.zeros_like(keys)
                 v_rec = torch.zeros_like(values)
+                attention_loss = 0
                 for l in range(L):
                     k_flat, _ = autoencoders[l](keys[:,l].reshape(-1, D))
                     v_flat, _ = autoencoders[l](values[:,l].reshape(-1, D))
                     k_rec[:,l] = k_flat.reshape(B, H, S, D)
                     v_rec[:,l] = v_flat.reshape(B, H, S, D)
+                    
+                    attention_weights = torch.matmul(k_flat, v_flat.T) / math.sqrt(D)
+                    reconstructed_attention_weights = torch.matmul(k_rec[:,l].reshape(-1, D), v_rec[:,l].reshape(-1, D).T) / math.sqrt(D)
+                    attention_loss += F.mse_loss(attention_weights, reconstructed_attention_weights)
 
-                kv_loss = F.mse_loss(k_rec, keys) + F.mse_loss(v_rec, values)
+                # kv_loss = F.mse_loss(k_rec, keys) + F.mse_loss(v_rec, values)
+                
+                attention_loss /= L  # Normalize by the number of layers
+                val_losses.append(attention_loss.item())
+                
                 # **raw** loss, no division here
-                val_losses.append(kv_loss.item())
+                # val_losses.append(kv_loss.item())
 
         avg_val_loss = np.mean(val_losses)
         print(f"[Epoch {epoch}] Val Loss:   {avg_val_loss:.4f}")
