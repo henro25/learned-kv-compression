@@ -1,0 +1,29 @@
+{
+    "model_name": "Qwen/Qwen2.5-0.5B",
+    "autoencoder_path": "experiment_results_Qwen/Qwen_Qwen2.5-0.5B/autoencoders_final-qwen-latent_16-2-1.pth",
+    "latent_dim": 16,
+    "seed": 42,
+    "skip_training": false,
+    "quantization_bits": [2, 4, 8, 16],
+    "output_dir": "experiment_results_Qwen",
+  
+    "eval_interval": 1000,
+    "num_eval_texts": 5,
+  
+    "lm_batch_size": 1,
+    "buffer_size": 256,
+    "batch_size": 64,
+    "dtype": "fp16",
+    "buffer_mult": 2,
+    "gradient_accumulation_steps": 2,
+  
+    "device": "cuda",
+  
+    "name": "Qwen/Qwen2.5-0.5B",
+    "num_hidden_layers": 24,
+    "num_attention_heads": 14,
+    "max_seq_len": 8192,
+    "hidden_size": 896,
+    "vocab_size": 151936,
+    "cache_sizes": [1, 10, 100, 1000]
+}
