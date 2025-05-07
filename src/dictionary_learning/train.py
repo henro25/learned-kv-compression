@@ -255,9 +255,20 @@ def main(cfg):
             v_rec = torch.zeros_like(values)
             for l in range(L):
                 for h in range(H):
+                    key_slice = keys[:, l, h]
+                    value_slice = values[:, l, h]
+
+                    print(f"Layer {l}, Head {h}:")
+                    print(f"  keys_slice - isnan: {torch.isnan(key_slice).any()}, isinf: {torch.isinf(key_slice).any()}, min: {key_slice.min().item():.4f}, max: {key_slice.max().item():.4f}")
+                    print(f"  values_slice - isnan: {torch.isnan(value_slice).any()}, isinf: {torch.isinf(value_slice).any()}, min: {value_slice.min().item():.4f}, max: {value_slice.max().item():.4f}")
+
                     # Flatten seq_len and head_dim for AE
-                    k_flat, _ = autoencoders[l][h](keys[:, l, h].reshape(-1, D))
-                    v_flat, _ = autoencoders[l][h](values[:, l, h].reshape(-1, D))
+                    k_flat, _ = autoencoders[l][h](key_slice.reshape(-1, D))
+                    v_flat, _ = autoencoders[l][h](value_slice.reshape(-1, D))
+
+                    print(f"  k_flat - isnan: {torch.isnan(k_flat).any()}, isinf: {torch.isinf(k_flat).any()}, min: {k_flat.min().item():.4f}, max: {k_flat.max().item():.4f}")
+                    print(f"  v_flat - isnan: {torch.isnan(v_flat).any()}, isinf: {torch.isinf(v_flat).any()}, min: {v_flat.min().item():.4f}, max: {v_flat.max().item():.4f}")
+
                     k_rec[:, l, h] = k_flat.reshape(B, S, D)
                     v_rec[:, l, h] = v_flat.reshape(B, S, D)
 
