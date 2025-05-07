@@ -155,7 +155,7 @@ class Autoencoder(nn.Module):
 
         # Debug Decoder
         temp_recon = z
-        print("-- Decoder Layers --")
+        # print("-- Decoder Layers --")
         for i, layer in enumerate(self.decoder):
             layer_name = f"Decoder Layer {i} ({layer.__class__.__name__})"
             # if hasattr(layer, 'weight') and layer.weight is not None:
