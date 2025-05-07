@@ -31,10 +31,12 @@ def _build_mlp(
     prev = next(it)
     for d in it:
         layers.append(nn.Linear(prev, d))
-        if norm_cls is not None:
-            # LayerNorm expects normalized_shape, BatchNorm1d expects num_features
-            layers.append(norm_cls(d))
-        layers.append(act_cls())
+        is_last = (d == dims[-1])
+        if not is_last:
+            if norm_cls is not None:
+                # LayerNorm expects normalized_shape, BatchNorm1d expects num_features
+                layers.append(norm_cls(d))
+            layers.append(act_cls())
         prev = d
     return nn.Sequential(*layers)
 
