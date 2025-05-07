@@ -1,6 +1,6 @@
 {
     "model_name": "distilgpt2",
-    "autoencoder_path": "experiment_results_distilgpt2/distilgpt2/distilgpt2_latent32_lr0.0005/autoencoders_final.pth",
+    "autoencoder_path": "experiment_results_distilgpt2/autoencoders_final_distilgpt2_latent_32_per_head.pth",
     "latent_dim": 32,
     "seed": 42,
     "skip_training": false,
