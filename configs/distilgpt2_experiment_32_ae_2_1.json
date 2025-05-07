@@ -26,7 +26,7 @@
   "device": "cuda",
   
   "max_seq_len": 1024,
-  "buffer_size": 1024,
+  "buffer_size": 256,
 
   "autoencoder_path": "experiment_results_distilgpt2/asym_32/autoencoders_final_distilgpt2_latent_32_ae_2_1.pth",
   "output_dir": "experiment_results_distilgpt2/asym_32",
