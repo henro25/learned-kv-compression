@@ -22,7 +22,7 @@
   "eval_interval": 1,
   "config": "configs/distilgpt2_experiment_32.json",
   "num_train_texts": 10000,
-  "num_eval_texts": 5,
+  "num_eval_texts": 1,
   "device": "cuda",
   
   "max_seq_len": 1024,
@@ -32,7 +32,7 @@
   "output_dir": "experiment_results_distilgpt2",
   "vocab_size": 50257,
   "cache_sizes": [1, 10, 100, 1000],
-  "quantization_bits": [2, 4, 8, 16],
+  "quantization_bits": [2, 4, 8, 16, 32],
   "model_name": "distilgpt2",
   "dtype": "float32"
 }
