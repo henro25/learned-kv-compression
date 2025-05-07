@@ -20,6 +20,7 @@ import random
 import json
 import pprint
 import math
+import logging
 from typing import Tuple, List
 
 import numpy as np
@@ -177,7 +178,7 @@ def main(cfg):
     warmup_steps = int(cfg.get("warmup_ratio", 0.1) * total_steps)
 
     optimizer = AdamW(
-        [p for layer_aes in autoencoders for head_ae in layer_aes for p in head_ae.parameters()],
+        [p for ae in autoencoders for p in ae.parameters()],
         lr=cfg["lr"],
         weight_decay=cfg.get("weight_decay", 1e-3),
         betas=(0.9, 0.999),
@@ -187,12 +188,28 @@ def main(cfg):
         num_warmup_steps=warmup_steps,
         num_training_steps=total_steps,
     )
-    plateau_scheduler = ReduceLROnPlateau(
+
+    class LoggingReduceLROnPlateau(ReduceLROnPlateau):
+        def __init__(self, optimizer, mode='min', factor=0.25, patience=1,
+                     threshold=1e-4, threshold_mode='rel', cooldown=0,
+                     min_lr=0, eps=1e-8, verbose=False):
+            super().__init__(optimizer, mode, factor, patience, threshold, threshold_mode,
+                             cooldown, min_lr, eps, verbose)
+            self.logger = logging.getLogger(__name__)
+
+        def _reduce_lr(self, epoch):
+            old_lr = self.optimizer.param_groups[0]['lr']
+            super()._reduce_lr(epoch)
+            new_lr = self.optimizer.param_groups[0]['lr']
+            if new_lr < old_lr:
+                self.logger.info(f"Epoch {epoch}: Reducing learning rate from {old_lr:.6f} to {new_lr:.6f}")
+
+    plateau_scheduler = LoggingReduceLROnPlateau(
         optimizer,
         mode='min',
         factor=cfg.get("lr_reduce_factor", 0.5),
         patience=cfg.get("lr_patience", 1),
-        verbose=True,
+        verbose=False  # Set verbose to False here
     )
 
     # ── training loop (Modified for per-head autoencoders) ─────────────────────
