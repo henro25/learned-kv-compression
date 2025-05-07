@@ -2,8 +2,8 @@
 Module Name: autoencoder.py
 Description: A configurable MLP Autoencoder with optional normalization layers
              (LayerNorm or BatchNorm) to improve generalization.
-Author: Henry Huang
-Last updated: 2025‑05‑06
+Author: Henry Huang
+Last updated: 2025-5-07
 """
 
 from typing import Sequence, Iterable, Type, Optional
