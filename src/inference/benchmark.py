@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-benchmark.py   (patched 2025‑05‑05)
+benchmark_per_head.py   (patched 2025-05-05, adapted for per-head AE)
 
 Benchmarks:
-  • raw‑perplexity baseline
-  • KV‑cache baseline with optional quantisation
-  • AE‑compressed + quantised KV perplexity
-  • LongBench across bit‑widths
+  • raw-perplexity baseline
+  • KV-cache baseline with optional quantisation
+  • AE-compressed + quantised KV perplexity (per-head)
+  • LongBench across bit-widths
   • Example generations
 
 Patches
@@ -15,6 +15,7 @@ Patches
 ✔ compress_past sanitises encoder/decoder outputs to keep them finite.
 ✔ token_loop skips steps that would propagate NaNs to the loss.
 ✔ Added explicit sanity checks + log warnings so problems surface early.
+✔ Adaptation to load and use per-head autoencoders.
 """
 
 # ─── quiet noisy logs ────────────────────────────────────────────────────
@@ -83,22 +84,35 @@ def resolve_dims(cfg):
     return L, nH, H // nH
 
 
-def compress_past(past, aes, bits):
-    """Encode → (optional) quantise → decode each KV pair layer‑wise."""
+def compress_past_per_head(past, aes, bits):
+    """Encode → (optional) quantise → decode each KV pair head-wise and layer-wise."""
     rebuilt = []
-    for (k, v), ae in zip(past, aes):
+    for layer_idx, (k, v) in enumerate(past):
         B, H, S, D = k.shape
-        # encode
-        k_lat = _sanitize(ae.encoder(k.reshape(-1, D)))
-        v_lat = _sanitize(ae.encoder(v.reshape(-1, D)))
-        # quantise in latent space
-        if bits is not None:
-            k_lat = quantize_tensor(k_lat, bits)
-            v_lat = quantize_tensor(v_lat, bits)
-        # decode
-        k_rec = _sanitize(ae.decoder(k_lat)).reshape(B, H, S, D)
-        v_rec = _sanitize(ae.decoder(v_lat)).reshape(B, H, S, D)
-        rebuilt.append((k_rec, v_rec))
+        layer_aes = aes[layer_idx]
+        layer_rebuilt = []
+        for head_idx in range(H):
+            k_head = k[:, head_idx].reshape(-1, D)
+            v_head = v[:, head_idx].reshape(-1, D)
+
+            # encode
+            k_lat = _sanitize(layer_aes[head_idx].encoder(k_head))
+            v_lat = _sanitize(layer_aes[head_idx].encoder(v_head))
+
+            # quantise in latent space
+            if bits is not None:
+                k_lat = quantize_tensor(k_lat, bits)
+                v_lat = quantize_tensor(v_lat, bits)
+
+            # decode
+            k_rec = _sanitize(layer_aes[head_idx].decoder(k_lat)).reshape(B, S, D)
+            v_rec = _sanitize(layer_aes[head_idx].decoder(v_lat)).reshape(B, S, D)
+            layer_rebuilt.append((k_rec, v_rec))
+
+        # Stack the rebuilt heads back together
+        k_rec_stacked = torch.stack([kv[0] for kv in layer_rebuilt], dim=1)
+        v_rec_stacked = torch.stack([kv[1] for kv in layer_rebuilt], dim=1)
+        rebuilt.append((k_rec_stacked, v_rec_stacked))
     return DynamicCache.from_legacy_cache(tuple(rebuilt))
 
 
@@ -122,13 +136,13 @@ def top_k_filter(logits, k):
     return out
 
 
-def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0, bits=None):
+def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0, bits=None, aes=None, per_head=False):
     ids  = enc.input_ids.clone()
     last = ids[:, -1:].to(model.device)
     for _ in range(gen_len):
         with torch.no_grad():
             out = model(input_ids=last, past_key_values=past, use_cache=True)
-        logits, past = out.logits[:, -1, :], quantize_past(out.past_key_values, bits)
+        logits, next_past = out.logits[:, -1, :], out.past_key_values
         if torch.isnan(logits).any():
             # logger.warning("NaNs detected in logits during generation – token skipped.")
             break
@@ -136,6 +150,9 @@ def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0
         probs  = torch.softmax(logits, dim=-1)
         nxt    = safe_sample(probs)
         ids, last = torch.cat([ids, nxt], dim=-1), nxt
+        past = quantize_past(next_past, bits) if not aes else (
+            compress_past_per_head(next_past, aes, bits) if per_head else compress_past(next_past, aes, bits)
+        )
     return tokenizer.decode(ids[0], skip_special_tokens=True)
 
 
@@ -160,7 +177,7 @@ def perplexity(model, tok, texts, max_len, desc):
     return math.exp(tot_loss / tot_tok)
 
 
-def token_loop(model, tok, texts, *, aes=None, bits=None, max_len=1024, desc="kv"):
+def token_loop_per_head(model, tok, texts, *, aes=None, bits=None, max_len=1024, desc="kv"):
     loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
     tot_loss = tot_tok = 0
     for txt in tqdm(texts, desc=desc):
@@ -176,7 +193,7 @@ def token_loop(model, tok, texts, *, aes=None, bits=None, max_len=1024, desc="kv
             if torch.isnan(out.logits).any():  # skip corrupt step
                 # logger.warning(f"NaNs detected in logits at token {t} – skipping.")
                 continue
-            past = (compress_past(out.past_key_values, aes, bits)
+            past = (compress_past_per_head(out.past_key_values, aes, bits)
                     if aes else quantize_past(out.past_key_values, bits))
             step_loss = loss_fn(out.logits[:, -1, :], ids[:, t + 1]).item()
             if math.isnan(step_loss):
@@ -208,8 +225,8 @@ def run_benchmark(cfg: dict):
     )
     model.config.pad_token_id = tok.pad_token_id
 
-    # -------- autoencoder construction ----------------------------------------
-    L, _, dH = resolve_dims(model.config)
+    # -------- autoencoder construction (per-head) -----------------------------
+    L, nH, dH = resolve_dims(model.config)
 
     ckpt_path = cfg.get("autoencoder_path", "")
     ckpt = torch.load(ckpt_path, map_location=device) if os.path.exists(ckpt_path) else None
@@ -218,22 +235,45 @@ def run_benchmark(cfg: dict):
     dec_sizes = cfg.get("decoder_layer_sizes", [])
     act_name  = cfg.get("activation", "ReLU")
 
-    aes = []
-    for i in range(L):
-        ae = Autoencoder(
-            input_dim=dH,
-            latent_dim=cfg["latent_dim"],
-            encoder_layer_sizes=enc_sizes,
-            decoder_layer_sizes=dec_sizes,
-            activation=act_name,
-            dtype=dtype,
-        ).to(device)
-        if ckpt:
-            ae.load_state_dict(ckpt[f"layer_{i}"])
-        ae.eval()
-        aes.append(ae)
+    aes = nn.ModuleList([
+        nn.ModuleList([
+            Autoencoder(
+                input_dim=dH,
+                latent_dim=cfg["latent_dim"],
+                encoder_layer_sizes=enc_sizes,
+                decoder_layer_sizes=dec_sizes,
+                activation=act_name,
+                dtype=dtype,
+            ).to(device)
+            for _ in range(nH)
+        ])
+        for _ in range(L)
+    ])
 
-    # -------- bit‑width list ---------------------------------------------------
+    if ckpt:
+        for l_idx in range(L):
+            for h_idx in range(nH):
+                key = f"layer_{l_idx}/head_{h_idx}" if f"layer_{l_idx}" in ckpt and f"head_{h_idx}" in ckpt[f"layer_{l_idx}"] else f"layer_{l_idx}" # Handle both saving formats
+                if f"layer_{l_idx}" in ckpt and f"head_{h_idx}" in ckpt[f"layer_{l_idx}"]:
+                    aes[l_idx][h_idx].load_state_dict(ckpt[f"layer_{l_idx}"][f"head_{h_idx}"])
+                elif f"layer_{l_idx}" in ckpt and isinstance(ckpt[f"layer_{l_idx}"], nn.ModuleList) and len(ckpt[f"layer_{l_idx}"] ) > h_idx:
+                    aes[l_idx][h_idx].load_state_dict(ckpt[f"layer_{l_idx}"][h_idx]) # Handle if the per-head AEs were saved as a ModuleList directly
+                elif isinstance(ckpt, nn.ModuleList) and len(ckpt) > l_idx and len(ckpt[l_idx]) > h_idx: # Handle if the top level is a ModuleList
+                    aes[l_idx][h_idx].load_state_dict(ckpt[l_idx][h_idx])
+                elif isinstance(ckpt, dict) and f"layer_{l_idx}" in ckpt and isinstance(ckpt[f"layer_{l_idx}"], dict) and len(ckpt[f"layer_{l_idx}"]) > h_idx and all(k.startswith('head_') for k in ckpt[f"layer_{l_idx}"].keys()): # Handle dict of heads
+                    head_key = next(k for k in ckpt[f"layer_{l_idx}"].keys() if int(k.split('_')[-1]) == h_idx)
+                    aes[l_idx][h_idx].load_state_dict(ckpt[f"layer_{l_idx}"][head_key])
+                elif isinstance(ckpt, dict) and f"layer_{l_idx}" in ckpt and isinstance(ckpt[f"layer_{l_idx}"], nn.ModuleList) and len(ckpt[f"layer_{l_idx}"]) > h_idx: # Handle ModuleList within layer dict
+                    aes[l_idx][h_idx].load_state_dict(ckpt[f"layer_{l_idx}"][h_idx])
+                elif isinstance(ckpt, nn.ModuleList) and len(ckpt) > l_idx and isinstance(ckpt[l_idx], nn.ModuleList) and len(ckpt[l_idx]) > h_idx: # Handle nested ModuleList
+                    aes[l_idx][h_idx].load_state_dict(ckpt[l_idx][h_idx])
+                elif isinstance(ckpt, dict) and f"layer_{l_idx}" in ckpt and isinstance(ckpt[f"layer_{l_idx}"], dict) and str(h_idx) in ckpt[f"layer_{l_idx}"]: # Handle string keys for heads
+                    aes[l_idx][h_idx].load_state_dict(ckpt[f"layer_{l_idx}"][str(h_idx)])
+                else:
+                    logger.warning(f"Could not load state dict for layer {l_idx}, head {h_idx} from checkpoint.")
+        aes.eval()
+
+    # -------- bit-width list ---------------------------------------------------
     bits_list = [None] + sorted(
         b for b in cfg.get("quantization_bits", [])
         if isinstance(b, int) and b > 1
@@ -252,16 +292,16 @@ def run_benchmark(cfg: dict):
         model, tok, texts, cfg["max_seq_len"], "Raw"
     )
 
-    # per‑bit benchmarks
+    # per-bit benchmarks
     results["perplexities"] = {}
     for b in bits_list:
         if b is None:
             continue
-        kv = token_loop(
+        kv = token_loop_per_head(
             model, tok, texts,
             bits=b, max_len=cfg["max_seq_len"], desc=f"KV{b}"
         )
-        ae = token_loop(
+        ae = token_loop_per_head(
             model, tok, texts,
             aes=aes, bits=b, max_len=cfg["max_seq_len"], desc=f"AE{b}"
         )
@@ -282,7 +322,7 @@ def run_benchmark(cfg: dict):
         for b in bits_list:
             if b is None:
                 continue
-            longbench["compressed"].setdefault(str(b), {})[s] = token_loop(
+            longbench["compressed"].setdefault(str(b), {})[s] = token_loop_per_head(
                 model, tok, txts,
                 aes=aes, bits=b, max_len=cfg["max_seq_len"], desc=f"{s}_AE{b}"
             )
@@ -301,8 +341,8 @@ def run_benchmark(cfg: dict):
         kv    = continue_text(tok, model, enc, cache,
                               gen_len=gen_len, top_k=top_k, bits=first_bit)
         ae    = continue_text(tok, model, enc,
-                              compress_past(cache, aes, first_bit),
-                              gen_len=gen_len, top_k=top_k)
+                              compress_past_per_head(cache, aes, first_bit),
+                              gen_len=gen_len, top_k=top_k, per_head=True)
         examples.append({
             "prompt": prompt,
             "raw": raw,
