@@ -35,6 +35,7 @@ hf_logging.set_verbosity_error()
 
 # ─── deps ───────────────────────────────────────────────────────────────
 import torch
+import torch.nn as nn
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.cache_utils import DynamicCache
