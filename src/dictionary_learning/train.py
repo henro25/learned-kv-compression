@@ -59,7 +59,36 @@ def parse_args():
 def compute_attention(q: torch.Tensor,
                       k: torch.Tensor,
                       v: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    # ... (your compute_attention function) ...
+    """Scaled-dot-product attention for tensors shaped (B, L, H, S, D)."""
+    print("Entering compute_attention")
+    print(f"q.shape: {q.shape}")
+    print(f"k.shape: {k.shape}")
+    print(f"v.shape: {v.shape}")
+    B, L, H, S, D = q.shape
+    print(f"B: {B}, L: {L}, H: {H}, S: {S}, D: {D}")
+
+    if D == 0:
+        print("Warning: Head dimension D is zero!")
+        return torch.zeros_like(v), torch.zeros((B, L, H, S, S), dtype=v.dtype, device=v.device)
+
+    q2 = q.reshape(B * L * H, S, D)
+    k2 = k.reshape(B * L * H, S, D)
+    v2 = v.reshape(B * L * H, S, D)
+    print(f"q2.shape: {q2.shape}")
+    print(f"k2.shape: {k2.shape}")
+    print(f"v2.shape: {v2.shape}")
+
+    scores = torch.matmul(q2, k2.transpose(-2, -1)) / math.sqrt(D)   # (B*L*H, S, S)
+    print(f"scores.shape: {scores.shape}")
+    attn_weights = F.softmax(scores, dim=-1)
+    print(f"attn_weights.shape: {attn_weights.shape}")
+    output = torch.matmul(attn_weights, v2)                          # (B*L*H, S, D)
+    print(f"output.shape (before reshape): {output.shape}")
+
+    attn_weights = attn_weights.reshape(B, L, H, S, S)
+    output       = output.reshape(B, L, H, S, D)
+    print(f"output.shape (after reshape): {output.shape}")
+    print("Exiting compute_attention")
     return output, attn_weights
 
 
