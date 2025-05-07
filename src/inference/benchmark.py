@@ -281,7 +281,7 @@ def run_benchmark(cfg: dict):
     )
 
     # -------- evaluation datasets ---------------------------------------------
-    ds    = load_dataset("wikitext", "wikitext-103-raw-v1")["test"]["text"]
+    ds    = load_dataset("wikitext", "wikitext-103-raw-v1")["train"]["text"]
     texts = [t for t in ds if t.strip()]
     if cfg.get("num_eval_texts"):
         texts = texts[: cfg["num_eval_texts"]]
