@@ -9,7 +9,7 @@
   "decoder_layer_sizes": [32, 32],
   "activation": "GELU",
   "gradient_accumulation_steps": 2,
-  "lr": 0.005,
+  "lr": 0.001,
   "seed": 42,
   "head_dim": 64,
   "buffer_mult": 2,
