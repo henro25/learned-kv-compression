@@ -30,6 +30,7 @@
   "autoencoder_path": "experiment_results_distilgpt2/autoencoders_final_distilgpt2_latent_16_per_head.pth",
   "output_dir": "experiment_results_distilgpt2",
   "vocab_size": 50257,
-  "cache_sizes": [1, 10, 100, 1000]
+  "cache_sizes": [1, 10, 100, 1000],
+  "model_name": "distilgpt2"
 }
   
