@@ -241,10 +241,25 @@ def run_benchmark(cfg: dict):
         ]) for _ in range(L)
     ])
 
-    if os.path.exists(cfg.get("autoencoder_path", "")):
+    if os.path.exists(cfg["autoencoder_path"]):
         ckpt = torch.load(cfg["autoencoder_path"], map_location=device)
-        # [your existing checkpoint-loading logic here]
+        for l_idx in range(L):
+            for h_idx in range(nH):
+                layer_key = f"layer_{l_idx}"
+                head_key  = f"head_{h_idx}"
+                if layer_key in ckpt and head_key in ckpt[layer_key]:
+                    aes[l_idx][h_idx].load_state_dict(
+                        ckpt[layer_key][head_key]
+                    )
+                else:
+                    logger.warning(
+                        f"No weights for layer {l_idx}, head {h_idx}"
+                    )
         aes.eval()
+    else:
+        logger.error(
+            f"Autoencoder checkpoint not found at {cfg['autoencoder_path']}"
+        )
 
     # quantization bits list (skip None)
     bits_list = sorted(b for b in cfg.get("quantization_bits", []) if isinstance(b, int) and b > 1)
