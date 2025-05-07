@@ -3,12 +3,12 @@
 benchmark_per_head.py   (patched 2025-05-07, adapted for per-head AE)
 
 Benchmarks:
-  • raw-perplexity baseline
-  • KV-cache baseline with optional quantisation
-  • AE-compressed + quantised KV perplexity (per-head)
+  • raw-perplexity baseline + overhead
+  • KV-cache baseline with optional quantisation + overhead
+  • AE-compressed + quantised KV perplexity (per-head) + overhead
   • LongBench across bit-widths
-  • Example generations
-  • Decompression speed (time to first token)
+  • Example generations + decompression speed
+  • Estimated memory footprint (KV cache)
 
 Patches
 ───────
@@ -19,6 +19,8 @@ Patches
 ✔ Adaptation to load and use per-head autoencoders.
 ✔ Added decompression speed to the benchmark (time to first token).
 ✔ Added quantization to the raw KV-cache baseline.
+✔ Added estimation of memory footprint for KV cache (with and without AE).
+✔ Added measurement of inference overhead for all baselines.
 """
 
 # ─── quiet noisy logs ────────────────────────────────────────────────────
@@ -86,6 +88,34 @@ def resolve_dims(cfg):
     if None in (L, H, nH):
         raise ValueError(f"Could not resolve model dimensions from config: {cfg}")
     return L, nH, H // nH
+
+
+def estimate_kv_cache_size(past, bits=None):
+    """Estimates the size of the KV cache in bytes."""
+    total_bytes = 0
+    if past:
+        for k, v in past:
+            dtype_size = 4  # Assume float32 if bits is None
+            if bits is not None:
+                dtype_size = bits / 8
+            total_bytes += k.numel() * dtype_size
+            total_bytes += v.numel() * dtype_size
+    return total_bytes
+
+
+def estimate_compressed_kv_cache_size(past, aes, bits=None, latent_dim=None):
+    """Estimates the size of the compressed KV cache in bytes."""
+    if latent_dim is None:
+        return 0
+    total_bytes = 0
+    if past:
+        for layer_idx, (k, v) in enumerate(past):
+            B, H, S, D = k.shape
+            dtype_latent = 4  # Assume float32 if bits is None
+            if bits is not None:
+                dtype_latent = bits / 8
+            total_bytes += B * H * S * latent_dim * dtype_latent * 2 # For both k_lat and v_lat
+    return total_bytes
 
 
 def compress_past_per_head(past, aes, bits):
@@ -173,30 +203,42 @@ def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0
 
 # ─── perplexity helpers ─────────────────────────────────────────────────
 
-def perplexity(model, tok, texts, max_len, desc):
+def perplexity(model, tok, texts, max_len, desc, measure_overhead=False):
     loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
     tot_loss = tot_tok = 0
+    total_overhead = 0
+    num_steps = 0
     for txt in tqdm(texts, desc=desc):
         inp = tok(txt, return_tensors="pt", truncation=True, max_length=max_len).to(model.device)
         if inp.input_ids.size(1) < 2:
             continue
+        start_time = time.perf_counter()
         out = model(**inp)
+        forward_time = time.perf_counter() - start_time
         logits = out.logits[:, :-1, :].contiguous()
         lbl    = inp.input_ids[:, 1:].contiguous()
         msk    = inp.attention_mask[:, 1:].contiguous()
         flat_loss = loss_fn(logits.view(-1, logits.size(-1)), lbl.view(-1))
         tot_loss += (flat_loss * msk.view(-1)).sum().item()
         tot_tok  += int(msk.sum())
+        if measure_overhead:
+            total_overhead += forward_time
+            num_steps += 1
+
     if tot_tok == 0:
         raise RuntimeError("No valid tokens for perplexity calculation.")
-    return math.exp(tot_loss / tot_tok)
+    perplexity_val = math.exp(tot_loss / tot_tok)
+    overhead_per_token = total_overhead / tot_tok if tot_tok > 0 and measure_overhead else 0
+    return perplexity_val, overhead_per_token
 
 
-def token_loop_per_head(model, tok, texts, *, aes=None, bits=None, max_len=1024, desc="kv"):
+def token_loop_per_head(model, tok, texts, *, aes=None, bits=None, max_len=1024, desc="kv", measure_overhead=False):
     loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
     tot_loss = tot_tok = 0
     total_decode_time = 0
+    total_overhead = 0
     num_steps = 0
+    first_past = None
     for txt in tqdm(texts, desc=desc):
         inp = tok(txt, return_tensors="pt", truncation=True, max_length=max_len).to(model.device)
         ids, attn = inp.input_ids, inp.attention_mask
@@ -206,16 +248,26 @@ def token_loop_per_head(model, tok, texts, *, aes=None, bits=None, max_len=1024,
         for t in range(ids.size(1) - 1):
             if not attn[0, t + 1]:
                 continue
+            start_time = time.perf_counter()
             out = model(input_ids=ids[:, t:t + 1], past_key_values=past, use_cache=True)
+            forward_time = time.perf_counter() - start_time
+            if t == 0:
+                first_past = out.past_key_values
             if torch.isnan(out.logits).any():  # skip corrupt step
                 # logger.warning(f"NaNs detected in logits at token {t} – skipping.")
                 continue
             if aes:
+                compress_start_time = time.perf_counter()
                 compressed_past, decode_time = compress_past_per_head(out.past_key_values, aes, bits)
+                compress_time = time.perf_counter() - compress_start_time
                 past = compressed_past
-                total_decode_time += decode_time
+                total_decode_time += decode_time + compress_time # Include compression time in overhead
             else:
+                quantize_start_time = time.perf_counter()
                 past = quantize_past(out.past_key_values, bits)
+                quantize_time = time.perf_counter() - quantize_start_time
+                total_overhead += quantize_time # Include quantization time in overhead
+
             step_loss = loss_fn(out.logits[:, -1, :], ids[:, t + 1]).item()
             if math.isnan(step_loss):
                 logger.warning(f"NaN loss at token {t} – skipping.")
@@ -223,11 +275,14 @@ def token_loop_per_head(model, tok, texts, *, aes=None, bits=None, max_len=1024,
             tot_loss += step_loss
             tot_tok  += 1
             num_steps += 1
+            if measure_overhead:
+                total_overhead += forward_time
 
     if tot_tok == 0:
         raise RuntimeError(f"No valid steps for token_loop in {desc}.")
     avg_decode_speed = total_decode_time / num_steps if num_steps > 0 and aes else 0
-    return math.exp(tot_loss / tot_tok), avg_decode_speed
+    overhead_per_token = total_overhead / tot_tok if tot_tok > 0 and measure_overhead else 0
+    return math.exp(tot_loss / tot_tok), avg_decode_speed, first_past, overhead_per_token
 
 # ────────────────────────────────────────────────────────────────────────
 def run_benchmark(cfg: dict):
@@ -251,6 +306,7 @@ def run_benchmark(cfg: dict):
 
     # -------- autoencoder construction (per-head) -----------------------------
     L, nH, dH = resolve_dims(model.config)
+    latent_dim = cfg.get("latent_dim")
 
     ckpt_path = cfg.get("autoencoder_path", "")
     ckpt = torch.load(ckpt_path, map_location=device) if os.path.exists(ckpt_path) else None
@@ -263,7 +319,7 @@ def run_benchmark(cfg: dict):
         nn.ModuleList([
             Autoencoder(
                 input_dim=dH,
-                latent_dim=cfg["latent_dim"],
+                latent_dim=latent_dim,
                 encoder_layer_sizes=enc_sizes,
                 decoder_layer_sizes=dec_sizes,
                 activation=act_name,
@@ -311,10 +367,31 @@ def run_benchmark(cfg: dict):
 
     results = {}
 
-    # raw baseline
-    results["raw_baseline_ppl"] = perplexity(
-        model, tok, texts, cfg["max_seq_len"], "Raw"
+    # raw baseline with overhead
+    raw_ppl, raw_overhead = perplexity(
+        model, tok, texts, cfg["max_seq_len"], "Raw", measure_overhead=True
     )
+    results["raw_baseline_ppl"] = raw_ppl
+    results["raw_baseline_overhead_per_token_s"] = raw_overhead
+
+    # Memory footprint estimation
+    example_input = tok(texts[0], return_tensors="pt", truncation=True, max_length=cfg["max_seq_len"]).to(device)
+    with torch.no_grad():
+        example_input_ids = example_input.input_ids.to(device)
+        example_attention_mask = example_input.attention_mask.to(device)
+        example_output = model(input_ids=example_input_ids, attention_mask=example_attention_mask, use_cache=True)
+        raw_kv_cache = example_output.past_key_values
+        results["memory_footprint_mb"] = {}
+        results["memory_footprint_mb"]["float32_kv_cache"] = estimate_kv_cache_size(raw_kv_cache) / (1024 * 1024)
+
+        for b in bits_list:
+            if b is not None:
+                quantized_kv_cache = quantize_past(raw_kv_cache, b)
+                results["memory_footprint_mb"][f"int{b}_kv_cache"] = estimate_kv_cache_size(quantized_kv_cache, b) / (1024 * 1024)
+                if latent_dim is not None:
+                    with torch.no_grad():
+                        compressed_example_past, _ = compress_past_per_head(raw_kv_cache, aes, b)
+                        results["memory_footprint_mb"][f"ae_int{b}_compressed_kv_cache"] = estimate_compressed_kv_cache_size(compressed_example_past, aes, b, latent_dim) / (1024 * 1024)
 
     # per-bit benchmarks
     results["perplexities"] = {}
@@ -322,20 +399,26 @@ def run_benchmark(cfg: dict):
         b_str = str(b) if b is not None else "none"
         results["perplexities"][b_str] = {}
 
-        # KV Cache Baseline (with optional quantization)
-        kv_ppl, _ = token_loop_per_head(
+        # KV Cache Baseline (with optional quantization) + overhead
+        kv_ppl, _, first_kv_past, kv_overhead = token_loop_per_head(
             model, tok, texts,
-            bits=b, max_len=cfg["max_seq_len"], desc=f"KV{b_str}"
+            bits=b, max_len=cfg["max_seq_len"], desc=f"KV{b_str}", measure_overhead=True
         )
         results["perplexities"][b_str]["kv_cache_baseline_ppl"] = kv_ppl
+        results["perplexities"][b_str]["kv_cache_baseline_overhead_per_token_s"] = kv_overhead
+        if first_kv_past is not None and b is not None:
+            results["memory_footprint_mb"].setdefault("generation", {})[f"int{b}_kv_cache"] = estimate_kv_cache_size(first_kv_past, b) / (1024 * 1024)
 
-        # AE Compressed KV
-        ae_ppl, avg_decode_speed = token_loop_per_head(
+        # AE Compressed KV + overhead
+        ae_ppl, avg_decode_speed, first_ae_past, ae_overhead = token_loop_per_head(
             model, tok, texts,
-            aes=aes, bits=b, max_len=cfg["max_seq_len"], desc=f"AE{b_str}"
+            aes=aes, bits=b, max_len=cfg["max_seq_len"], desc=f"AE{b_str}", measure_overhead=True
         )
         results["perplexities"][b_str]["ae_compressed_ppl"] = ae_ppl
         results["perplexities"][b_str]["avg_decompression_speed_per_token_s"] = avg_decode_speed
+        results["perplexities"][b_str]["ae_compressed_overhead_per_token_s"] = ae_overhead
+        if first_ae_past is not None and latent_dim is not None:
+            results["memory_footprint_mb"].setdefault("generation", {})[f"ae_int{b}_compressed_kv_cache"] = estimate_compressed_kv_cache_size(first_ae_past, aes, b, latent_dim) / (1024 * 1024)
 
     # -------- LongBench --------------------------------------------------------
     subsets   = ["narrativeqa", "hotpotqa", "2wikimqa", "musique", "dureader"]
@@ -343,13 +426,14 @@ def run_benchmark(cfg: dict):
     for s in subsets:
         data = load_dataset("THUDM/LongBench", s, trust_remote_code=True)["test"]["input"]
         txts = [t for t in data if t.strip()][: cfg.get("num_eval_texts") or None]
-        longbench["baseline"][s] = perplexity(
+        baseline_ppl, _ = perplexity(
             model, tok, txts, cfg["max_seq_len"], f"PPL {s}"
         )
+        longbench["baseline"][s] = baseline_ppl
         for b in bits_list:
             if b is None:
                 continue
-            ae_ppl, avg_decode_speed = token_loop_per_head(
+            ae_ppl, avg_decode_speed, _, _ = token_loop_per_head(
                 model, tok, txts,
                 aes=aes, bits=b, max_len=cfg["max_seq_len"], desc=f"{s}_AE{b}"
             )
