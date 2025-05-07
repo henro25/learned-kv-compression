@@ -233,7 +233,6 @@ def main(cfg):
                     v_rec[:, l, h] = v_flat.reshape(B, S, D)
 
             # losses
-            print("About to calculate losses") # <--- ADD THIS
             print("Checking for NaNs/Infs before KV loss:")
             print(f"isnan(k_rec).any(): {torch.isnan(k_rec).any()}")
             print(f"isinf(k_rec).any(): {torch.isinf(k_rec).any()}")
@@ -246,6 +245,11 @@ def main(cfg):
 
             kv_loss = F.mse_loss(k_rec, keys) + F.mse_loss(v_rec, values)
 
+            # Compute attention *before* checking for NaNs/Infs
+            _, attn_orig = compute_attention(queries, keys, values)
+            _, attn_rec  = compute_attention(queries, k_rec, v_rec)
+            attn_loss = F.mse_loss(attn_rec, attn_orig)
+
             print("Checking for NaNs/Infs before attention loss:")
             print(f"isnan(queries).any(): {torch.isnan(queries).any()}")
             print(f"isinf(queries).any(): {torch.isinf(queries).any()}")
@@ -253,10 +257,6 @@ def main(cfg):
             print(f"isinf(attn_orig).any(): {torch.isinf(attn_orig).any()}")
             print(f"isnan(attn_rec).any(): {torch.isnan(attn_rec).any()}")
             print(f"isinf(attn_rec).any(): {torch.isinf(attn_rec).any()}")
-
-            _, attn_orig = compute_attention(queries, keys, values)
-            _, attn_rec  = compute_attention(queries, k_rec, v_rec)
-            attn_loss = F.mse_loss(attn_rec, attn_orig)
 
             print(f"isnan(kv_loss): {torch.isnan(kv_loss)}")
             print(f"isinf(kv_loss): {torch.isinf(kv_loss)}")
