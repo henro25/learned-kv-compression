@@ -34,4 +34,3 @@
   "quantization_bits": [2, 4, 8, 16],
   "model_name": "distilgpt2"
 }
-  
