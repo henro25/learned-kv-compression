@@ -88,9 +88,8 @@ class Buffer():
         print(f"Buffer using data type: {self.dtype}")
         
         # Reduce buffer sequence length significantly to save memory
-        buffer_size = cfg.get("buffer_size", 256)  # Default to 256 tokens instead of 512
+        buffer_size = cfg.get("buffer_size", 128)  # Default to 256 tokens instead of 512
         self.buffer_seq_len = min(cfg.get("max_seq_len", 1024), buffer_size)  # Use smaller of max_seq_len or buffer_size
-        # print(f"Using buffer sequence length of {self.buffer_seq_len} tokens (max_seq_len: {cfg.get('max_seq_len', 1024)}, buffer_size: {buffer_size})")
         
         # Reduce buffer multiplier even more
         buffer_mult = min(cfg.get("buffer_mult", 1), 1)  # Cap at 1x instead of 2x
@@ -110,7 +109,7 @@ class Buffer():
         buffer_size = (batch_size * buffer_mult, cfg["num_hidden_layers"], 
                       self.num_heads, self.buffer_seq_len, self.head_dim)
         
-        print(f"Allocating buffers with shape {buffer_size}, total elements: {torch.prod(torch.tensor(buffer_size))}")
+        # print(f"Allocating buffers with shape {buffer_size}, total elements: {torch.prod(torch.tensor(buffer_size))}")
         
         try:
             # Try allocating tensors with specified size
