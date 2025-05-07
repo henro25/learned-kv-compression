@@ -2,7 +2,7 @@
   "name": "distilgpt2",
   "input_dim": 64,
   "latent_dim": 32,
-  "batch_size": 64,
+  "batch_size": 32,
   "num_epochs": 10,
   "hidden_size": 768,
   "encoder_layer_sizes": [32, 32],
@@ -26,6 +26,7 @@
   "device": "cuda",
   
   "max_seq_len": 1024,
+  "buffer_size": 1024,
 
   "autoencoder_path": "experiment_results_distilgpt2/asym_32/autoencoders_final_distilgpt2_latent_32_ae_3_2.pth",
   "output_dir": "experiment_results_distilgpt2/asym_32",

@@ -88,9 +88,9 @@ class Buffer():
         print(f"Buffer using data type: {self.dtype}")
         
         # Reduce buffer sequence length significantly to save memory
-        buffer_size = cfg.get("buffer_size", 128)  # Default to 128 tokens instead of 512
-        self.buffer_seq_len = min(cfg.get("max_seq_len", 256), buffer_size)  # Use smaller of max_seq_len or buffer_size
-        print(f"Using buffer sequence length of {self.buffer_seq_len} tokens (max_seq_len: {cfg.get('max_seq_len', 256)}, buffer_size: {buffer_size})")
+        buffer_size = cfg.get("buffer_size", 1024)  # Default to 128 tokens instead of 512
+        self.buffer_seq_len = min(cfg.get("max_seq_len", 1024), buffer_size)  # Use smaller of max_seq_len or buffer_size
+        print(f"Using buffer sequence length of {self.buffer_seq_len} tokens (max_seq_len: {cfg.get('max_seq_len', 1024)}, buffer_size: {buffer_size})")
         
         # Reduce buffer multiplier even more
         buffer_mult = min(cfg.get("buffer_mult", 1), 1)  # Cap at 1x instead of 2x
