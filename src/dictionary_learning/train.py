@@ -190,7 +190,7 @@ def main(cfg):
     )
 
     class LoggingReduceLROnPlateau(ReduceLROnPlateau):
-        def __init__(self, optimizer, mode='min', factor=0.5, patience=1,
+        def __init__(self, optimizer, mode='min', factor=0.25, patience=1,
                      threshold=1e-4, threshold_mode='rel', cooldown=0,
                      min_lr=0, eps=1e-8, verbose=False):
             super().__init__(optimizer, mode, factor, patience, threshold, threshold_mode,

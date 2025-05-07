@@ -1,6 +1,6 @@
 {
     "model_name": "distilgpt2",
-    "autoencoder_path": "experiment_results_distilgpt2/autoencoders_final_distilgpt2_latent_16_per_head.pth",
+    "autoencoder_path": "experiment_results_distilgpt2/distilgpt2/distilgpt2_latent16_lr0.0005/autoencoders_final.pth",
     "latent_dim": 16,
     "seed": 42,
     "skip_training": false,
@@ -8,7 +8,7 @@
     "output_dir": "experiment_results_distilgpt2",
   
     "eval_interval": 1000,
-    "num_eval_texts": 10,
+    "num_eval_texts": 5,
   
     "lm_batch_size": 1,
     "buffer_size": 256,

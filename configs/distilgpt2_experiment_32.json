@@ -2,7 +2,7 @@
   "name": "distilgpt2",
   "input_dim": 64,
   "latent_dim": 32,
-  "batch_size": 64,
+  "batch_size": 32,
   "num_epochs": 10,
   "hidden_size": 768,
   "encoder_layer_sizes": [],
@@ -34,3 +34,4 @@
   "quantization_bits": [2, 4, 8, 16],
   "model_name": "distilgpt2"
 }
+  
