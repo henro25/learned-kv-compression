@@ -22,7 +22,7 @@
   "eval_interval": 1,
   "config": "configs/distilgpt2_experiment_32.json",
   "num_train_texts": 20000,
-  "num_eval_texts": 10,
+  "num_eval_texts": 5,
   "device": "cuda",
   
   "max_seq_len": 1024,
