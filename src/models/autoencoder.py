@@ -10,6 +10,19 @@ from typing import Sequence, Iterable, Type, Optional
 import torch
 import torch.nn as nn
 
+def _print_stats(tensor_name: str, tensor: torch.Tensor):
+    if tensor is None:
+        print(f"Tensor {tensor_name} is None")
+        return
+    is_nan = torch.isnan(tensor).any().item()
+    is_inf = torch.isinf(tensor).any().item()
+    min_val = tensor.min().item() if not is_nan and not torch.isinf(tensor) and tensor.numel() > 0 else 'N/A'
+    max_val = tensor.max().item() if not is_nan and not torch.isinf(tensor) and tensor.numel() > 0 else 'N/A'
+    mean_val = tensor.mean().item() if not is_nan and not torch.isinf(tensor) and tensor.numel() > 0 else 'N/A'
+    std_val = tensor.std().item() if not is_nan and not torch.isinf(tensor) and tensor.numel() > 0 else 'N/A'
+    print(f"  {tensor_name} - isnan: {is_nan}, isinf: {is_inf}, min: {min_val}, max: {max_val}, mean: {mean_val}, std: {std_val}, shape: {tensor.shape}")
+    if is_nan or is_inf:
+        print(f"  !!! Problem detected in {tensor_name} !!!")
 
 def _build_mlp(
     dims: Iterable[int],
@@ -74,13 +87,80 @@ class Autoencoder(nn.Module):
 
     # -----------------------------------------------------
 
+    # def forward(self, x: torch.Tensor):
+    #     device = next(self.parameters()).device
+    #     dtype = next(self.parameters()).dtype
+    #     x = x.to(device=device, dtype=dtype)
+
+    #     z = self.encoder(x)
+    #     x_recon = self.decoder(z)
+    #     return x_recon, z
+    
     def forward(self, x: torch.Tensor):
         device = next(self.parameters()).device
-        dtype = next(self.parameters()).dtype
+        dtype = next(self.parameters()).dtype # Should be torch.float32
+        x_orig_shape = x.shape
         x = x.to(device=device, dtype=dtype)
 
-        z = self.encoder(x)
-        x_recon = self.decoder(z)
+        print(f"\n--- Autoencoder Forward Pass (Input shape: {x_orig_shape}) ---")
+        _print_stats("AE Input (x)", x)
+
+        # Debug Encoder
+        temp_z = x
+        print("-- Encoder Layers --")
+        for i, layer in enumerate(self.encoder):
+            layer_name = f"Encoder Layer {i} ({layer.__class__.__name__})"
+            if hasattr(layer, 'weight') and layer.weight is not None:
+                 _print_stats(f"{layer_name} weights", layer.weight.data)
+            if hasattr(layer, 'bias') and layer.bias is not None:
+                 _print_stats(f"{layer_name} bias", layer.bias.data)
+
+            temp_z_before_layer = temp_z
+            try:
+                temp_z = layer(temp_z)
+            except Exception as e:
+                print(f"  !!! ERROR during {layer_name}: {e} !!!")
+                _print_stats("Input to failing layer", temp_z_before_layer)
+                raise e
+            _print_stats(layer_name, temp_z)
+            if torch.isnan(temp_z).any() or torch.isinf(temp_z).any():
+                print(f"  !!! Problem detected after {layer_name}. Stopping further AE processing. !!!")
+                # To preserve z for return if needed, even if problematic:
+                # For example, you could return x, x here if z becomes NaN to see if it helps isolate
+                # but for now, let it flow to see decoder issues too.
+                # return temp_z, temp_z # Or (x,x) if z is bad, to debug if x was issue
+
+        z = temp_z
+        _print_stats("AE Latent (z)", z)
+
+        if torch.isnan(z).any() or torch.isinf(z).any():
+            print("  !!! Latent representation z contains NaN/Inf. Decoder will likely fail. !!!")
+
+        # Debug Decoder
+        temp_recon = z
+        print("-- Decoder Layers --")
+        for i, layer in enumerate(self.decoder):
+            layer_name = f"Decoder Layer {i} ({layer.__class__.__name__})"
+            if hasattr(layer, 'weight') and layer.weight is not None:
+                 _print_stats(f"{layer_name} weights", layer.weight.data)
+            if hasattr(layer, 'bias') and layer.bias is not None:
+                 _print_stats(f"{layer_name} bias", layer.bias.data)
+
+            temp_recon_before_layer = temp_recon
+            try:
+                temp_recon = layer(temp_recon)
+            except Exception as e:
+                print(f"  !!! ERROR during {layer_name}: {e} !!!")
+                _print_stats("Input to failing layer", temp_recon_before_layer)
+                raise e
+            _print_stats(layer_name, temp_recon)
+            if torch.isnan(temp_recon).any() or torch.isinf(temp_recon).any():
+                print(f"  !!! Problem detected after {layer_name}. Stopping further AE processing. !!!")
+                # return temp_recon, z # Or some other placeholder if recon is bad
+
+        x_recon = temp_recon
+        _print_stats("AE Recon (x_recon)", x_recon)
+        print("--- End Autoencoder Forward Pass ---")
         return x_recon, z
 
 

@@ -29,7 +29,7 @@
   "buffer_size": 128,
 
   "autoencoder_path": "experiment_results_distilgpt2/asym_32/autoencoders_final_distilgpt2_latent_32_ae_3_3.pth",
-  "output_dir": "experiment_results_distilgpt2/asym_32",
+  "output_dir": "experiment_results_distilgpt2",
   "vocab_size": 50257,
   "cache_sizes": [1, 10, 100, 1000],
   "quantization_bits": [2, 4, 8, 16],
