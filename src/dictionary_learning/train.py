@@ -27,7 +27,7 @@ from transformers import (
 from src.models.autoencoder import Autoencoder
 from src.utils.buffer import Buffer
 
-print("Script started at the top level") # <--- ADD THIS
+# print("Script started at the top level") # <--- ADD THIS
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Helper functions (No changes needed)
@@ -40,7 +40,7 @@ def load_config(path: str):
     cfg.setdefault("decoder_layer_sizes", [])
     cfg.setdefault("activation", "ReLU")
     cfg.setdefault("attn_loss_weight", 1.0)
-    print(f"Loaded config: {cfg}") # <--- ADD THIS
+    # print(f"Loaded config: {cfg}") # <--- ADD THIS
     return cfg
 
 
@@ -60,12 +60,12 @@ def compute_attention(q: torch.Tensor,
                       k: torch.Tensor,
                       v: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """Scaled-dot-product attention for tensors shaped (B, L, H, S, D)."""
-    print("Entering compute_attention")
-    print(f"q.shape: {q.shape}")
-    print(f"k.shape: {k.shape}")
-    print(f"v.shape: {v.shape}")
+    # print("Entering compute_attention")
+    # print(f"q.shape: {q.shape}")
+    # print(f"k.shape: {k.shape}")
+    # print(f"v.shape: {v.shape}")
     B, L, H, S, D = q.shape
-    print(f"B: {B}, L: {L}, H: {H}, S: {S}, D: {D}")
+    # print(f"B: {B}, L: {L}, H: {H}, S: {S}, D: {D}")
 
     if D == 0:
         print("Warning: Head dimension D is zero!")
@@ -74,21 +74,21 @@ def compute_attention(q: torch.Tensor,
     q2 = q.reshape(B * L * H, S, D)
     k2 = k.reshape(B * L * H, S, D)
     v2 = v.reshape(B * L * H, S, D)
-    print(f"q2.shape: {q2.shape}")
-    print(f"k2.shape: {k2.shape}")
-    print(f"v2.shape: {v2.shape}")
+    # print(f"q2.shape: {q2.shape}")
+    # print(f"k2.shape: {k2.shape}")
+    # print(f"v2.shape: {v2.shape}")
 
     scores = torch.matmul(q2, k2.transpose(-2, -1)) / math.sqrt(D)   # (B*L*H, S, S)
-    print(f"scores.shape: {scores.shape}")
+    # print(f"scores.shape: {scores.shape}")
     attn_weights = F.softmax(scores, dim=-1)
-    print(f"attn_weights.shape: {attn_weights.shape}")
+    # print(f"attn_weights.shape: {attn_weights.shape}")
     output = torch.matmul(attn_weights, v2)                          # (B*L*H, S, D)
-    print(f"output.shape (before reshape): {output.shape}")
+    # print(f"output.shape (before reshape): {output.shape}")
 
     attn_weights = attn_weights.reshape(B, L, H, S, S)
     output       = output.reshape(B, L, H, S, D)
-    print(f"output.shape (after reshape): {output.shape}")
-    print("Exiting compute_attention")
+    # print(f"output.shape (after reshape): {output.shape}")
+    # print("Exiting compute_attention")
     return output, attn_weights
 
 
@@ -97,7 +97,7 @@ def compute_attention(q: torch.Tensor,
 # ────────────────────────────────────────────────────────────────────────────────
 
 def main(cfg):
-    print("Entered the main function") # <--- ADD THIS
+    # print("Entered the main function") # <--- ADD THIS
     # reproducibility
     torch.manual_seed(cfg["seed"])
     np.random.seed(cfg["seed"])
@@ -109,10 +109,10 @@ def main(cfg):
         dtype = torch.bfloat16
     elif cfg.get("dtype") in ("fp16", "f16"):
         dtype = torch.float16
-    print(f"Using dtype: {dtype}")
-    print(f"CUDA available: {torch.cuda.is_available()}") # <--- ADD THIS
-    print(f"CUDA device count: {torch.cuda.device_count()}") # <--- ADD THIS
-    print(f"Device: {cfg['device']}") # <--- ADD THIS
+    # print(f"Using dtype: {dtype}")
+    # print(f"CUDA available: {torch.cuda.is_available()}") # <--- ADD THIS
+    # print(f"CUDA device count: {torch.cuda.device_count()}") # <--- ADD THIS
+    # print(f"Device: {cfg['device']}") # <--- ADD THIS
 
     # output dir (adjust for clarity)
     output_dir = os.path.join(cfg["output_dir"], "per_head")
@@ -134,7 +134,7 @@ def main(cfg):
             tokenizer.add_special_tokens({'pad_token': '[PAD]'})
             model.resize_token_embeddings(len(tokenizer))
         model.eval()
-        print("Model and tokenizer loaded successfully") # <--- ADD THIS
+        # print("Model and tokenizer loaded successfully") # <--- ADD THIS
     except Exception as e:
         print(f"Error loading model/tokenizer: {e}")
         return
@@ -157,7 +157,7 @@ def main(cfg):
         ])
         for _ in range(num_layers)
     ])
-    print("Autoencoders initialized") # <--- ADD THIS
+    # print("Autoencoders initialized") # <--- ADD THIS
 
     # tensorboard (adjust log directory)
     writer = SummaryWriter(log_dir=f'runs/{cfg["name"]}_{cfg["latent_dim"]}_per_head')
@@ -192,7 +192,7 @@ def main(cfg):
     try:
         train_buffer = Buffer(cfg, model, tokenizer, texts_train)
         val_buffer   = Buffer(cfg, model, tokenizer, texts_val)
-        print("Buffers initialized") # <--- ADD THIS
+        # print("Buffers initialized") # <--- ADD THIS
     except Exception as e:
         print(f"Error initializing buffer: {e}")
         return
@@ -236,18 +236,18 @@ def main(cfg):
         patience=cfg.get("lr_patience", 1),
         verbose=False  # Set verbose to False here
     )
-    print("Optimizer and schedulers initialized") # <--- ADD THIS
+    # print("Optimizer and schedulers initialized") # <--- ADD THIS
 
     # ── training loop (Modified for per-head autoencoders) ─────────────────────
     for epoch in range(1, cfg["num_epochs"] + 1):
-        print(f"Starting epoch {epoch}") # <--- ADD THIS
+        # print(f"Starting epoch {epoch}") # <--- ADD THIS
         for layer_aes in autoencoders:
             for head_ae in layer_aes:
                 head_ae.train()
         running_total, running_kv, running_attn = 0.0, 0.0, 0.0
 
         for step in tqdm.trange(batches_per_epoch, desc=f"Epoch {epoch}/{cfg['num_epochs']}"):
-            print(f"Starting step {step}") # <--- ADD THIS
+            # print(f"Starting step {step}") # <--- ADD THIS
             (keys, values), queries = train_buffer.next()
             B, L, H, S, D = keys.shape  # L is num_layers, H is num_heads
 
@@ -258,30 +258,30 @@ def main(cfg):
                     key_slice = keys[:, l, h]
                     value_slice = values[:, l, h]
 
-                    print(f"Layer {l}, Head {h}:")
-                    print(f"  keys_slice - isnan: {torch.isnan(key_slice).any()}, isinf: {torch.isinf(key_slice).any()}, min: {key_slice.min().item():.4f}, max: {key_slice.max().item():.4f}")
-                    print(f"  values_slice - isnan: {torch.isnan(value_slice).any()}, isinf: {torch.isinf(value_slice).any()}, min: {value_slice.min().item():.4f}, max: {value_slice.max().item():.4f}")
+                    # print(f"Layer {l}, Head {h}:")
+                    # print(f"  keys_slice - isnan: {torch.isnan(key_slice).any()}, isinf: {torch.isinf(key_slice).any()}, min: {key_slice.min().item():.4f}, max: {key_slice.max().item():.4f}")
+                    # print(f"  values_slice - isnan: {torch.isnan(value_slice).any()}, isinf: {torch.isinf(value_slice).any()}, min: {value_slice.min().item():.4f}, max: {value_slice.max().item():.4f}")
 
                     # Flatten seq_len and head_dim for AE
                     k_flat, _ = autoencoders[l][h](key_slice.reshape(-1, D))
                     v_flat, _ = autoencoders[l][h](value_slice.reshape(-1, D))
 
-                    print(f"  k_flat - isnan: {torch.isnan(k_flat).any()}, isinf: {torch.isinf(k_flat).any()}, min: {k_flat.min().item():.4f}, max: {k_flat.max().item():.4f}")
-                    print(f"  v_flat - isnan: {torch.isnan(v_flat).any()}, isinf: {torch.isinf(v_flat).any()}, min: {v_flat.min().item():.4f}, max: {v_flat.max().item():.4f}")
+                    # print(f"  k_flat - isnan: {torch.isnan(k_flat).any()}, isinf: {torch.isinf(k_flat).any()}, min: {k_flat.min().item():.4f}, max: {k_flat.max().item():.4f}")
+                    # print(f"  v_flat - isnan: {torch.isnan(v_flat).any()}, isinf: {torch.isinf(v_flat).any()}, min: {v_flat.min().item():.4f}, max: {v_flat.max().item():.4f}")
 
                     k_rec[:, l, h] = k_flat.reshape(B, S, D)
                     v_rec[:, l, h] = v_flat.reshape(B, S, D)
 
             # losses
-            print("Checking for NaNs/Infs before KV loss:")
-            print(f"isnan(k_rec).any(): {torch.isnan(k_rec).any()}")
-            print(f"isinf(k_rec).any(): {torch.isinf(k_rec).any()}")
-            print(f"isnan(keys).any(): {torch.isnan(keys).any()}")
-            print(f"isinf(keys).any(): {torch.isinf(keys).any()}")
-            print(f"isnan(v_rec).any(): {torch.isnan(v_rec).any()}")
-            print(f"isinf(v_rec).any(): {torch.isinf(v_rec).any()}")
-            print(f"isnan(values).any(): {torch.isnan(values).any()}")
-            print(f"isinf(values).any(): {torch.isinf(values).any()}")
+            # print("Checking for NaNs/Infs before KV loss:")
+            # print(f"isnan(k_rec).any(): {torch.isnan(k_rec).any()}")
+            # print(f"isinf(k_rec).any(): {torch.isinf(k_rec).any()}")
+            # print(f"isnan(keys).any(): {torch.isnan(keys).any()}")
+            # print(f"isinf(keys).any(): {torch.isinf(keys).any()}")
+            # print(f"isnan(v_rec).any(): {torch.isnan(v_rec).any()}")
+            # print(f"isinf(v_rec).any(): {torch.isinf(v_rec).any()}")
+            # print(f"isnan(values).any(): {torch.isnan(values).any()}")
+            # print(f"isinf(values).any(): {torch.isinf(values).any()}")
 
             kv_loss = F.mse_loss(k_rec, keys) + F.mse_loss(v_rec, values)
 
@@ -290,22 +290,22 @@ def main(cfg):
             _, attn_rec  = compute_attention(queries, k_rec, v_rec)
             attn_loss = F.mse_loss(attn_rec, attn_orig)
 
-            print("Checking for NaNs/Infs before attention loss:")
-            print(f"isnan(queries).any(): {torch.isnan(queries).any()}")
-            print(f"isinf(queries).any(): {torch.isinf(queries).any()}")
-            print(f"isnan(attn_orig).any(): {torch.isnan(attn_orig).any()}")
-            print(f"isinf(attn_orig).any(): {torch.isinf(attn_orig).any()}")
-            print(f"isnan(attn_rec).any(): {torch.isnan(attn_rec).any()}")
-            print(f"isinf(attn_rec).any(): {torch.isinf(attn_rec).any()}")
+            # print("Checking for NaNs/Infs before attention loss:")
+            # print(f"isnan(queries).any(): {torch.isnan(queries).any()}")
+            # print(f"isinf(queries).any(): {torch.isinf(queries).any()}")
+            # print(f"isnan(attn_orig).any(): {torch.isnan(attn_orig).any()}")
+            # print(f"isinf(attn_orig).any(): {torch.isinf(attn_orig).any()}")
+            # print(f"isnan(attn_rec).any(): {torch.isnan(attn_rec).any()}")
+            # print(f"isinf(attn_rec).any(): {torch.isinf(attn_rec).any()}")
 
-            print(f"isnan(kv_loss): {torch.isnan(kv_loss)}")
-            print(f"isinf(kv_loss): {torch.isinf(kv_loss)}")
-            print(f"isnan(attn_loss): {torch.isnan(attn_loss)}")
-            print(f"isinf(attn_loss): {torch.isinf(attn_loss)}")
+            # print(f"isnan(kv_loss): {torch.isnan(kv_loss)}")
+            # print(f"isinf(kv_loss): {torch.isinf(kv_loss)}")
+            # print(f"isnan(attn_loss): {torch.isnan(attn_loss)}")
+            # print(f"isinf(attn_loss): {torch.isinf(attn_loss)}")
 
             total_loss = kv_loss * 1 + attn_loss * 0
-            print(f"isnan(total_loss): {torch.isnan(total_loss)}")
-            print(f"isinf(total_loss): {torch.isinf(total_loss)}")
+            # print(f"isnan(total_loss): {torch.isnan(total_loss)}")
+            # print(f"isinf(total_loss): {torch.isinf(total_loss)}")
 
             (total_loss / cfg["gradient_accumulation_steps"]).backward()
 
@@ -326,7 +326,7 @@ def main(cfg):
             writer.add_scalar('Loss/train_total_step', total_loss.item(), glb_step)
             writer.add_scalar('Loss/train_kv_step', kv_loss.item(), glb_step)
             writer.add_scalar('Loss/train_attn_step', attn_loss.item(), glb_step)
-            print(f"Finished step {step}") # <--- ADD THIS
+            # print(f"Finished step {step}") # <--- ADD THIS
 
         denom = batches_per_epoch * cfg["batch_size"]
         avg_total = running_total / denom
@@ -391,7 +391,7 @@ def main(cfg):
             for l in range(num_layers)
         }
         torch.save(ckpt, os.path.join(output_dir, f"autoencoders_epoch_{epoch}.pth"))
-        print(f"Finished epoch {epoch}") # <--- ADD THIS
+        # print(f"Finished epoch {epoch}") # <--- ADD THIS
 
     # ── final save (now saving a nested dictionary) ───────────────────────────
     final_ckpt = {
