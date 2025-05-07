@@ -14,14 +14,31 @@ def _print_stats(tensor_name: str, tensor: torch.Tensor):
     if tensor is None:
         print(f"Tensor {tensor_name} is None")
         return
-    is_nan = torch.isnan(tensor).any().item()
-    is_inf = torch.isinf(tensor).any().item()
-    min_val = tensor.min().item() if not is_nan and not torch.isinf(tensor) and tensor.numel() > 0 else 'N/A'
-    max_val = tensor.max().item() if not is_nan and not torch.isinf(tensor) and tensor.numel() > 0 else 'N/A'
-    mean_val = tensor.mean().item() if not is_nan and not torch.isinf(tensor) and tensor.numel() > 0 else 'N/A'
-    std_val = tensor.std().item() if not is_nan and not torch.isinf(tensor) and tensor.numel() > 0 else 'N/A'
-    print(f"  {tensor_name} - isnan: {is_nan}, isinf: {is_inf}, min: {min_val}, max: {max_val}, mean: {mean_val}, std: {std_val}, shape: {tensor.shape}")
-    if is_nan or is_inf:
+    
+    # These produce Python booleans, let's rename for clarity inside this function
+    py_has_nan = torch.isnan(tensor).any().item()
+    py_has_inf = torch.isinf(tensor).any().item()
+    
+    num_elements = tensor.numel()
+    
+    # Use the Python booleans (py_has_nan, py_has_inf) in the conditions
+    min_val = 'N/A'
+    max_val = 'N/A'
+    mean_val = 'N/A'
+    std_val = 'N/A'
+
+    if num_elements > 0 and not py_has_nan and not py_has_inf:
+        min_val = tensor.min().item()
+        max_val = tensor.max().item()
+        mean_val = tensor.mean().item()
+        if num_elements == 1:
+            std_val = 0.0 # Standard deviation of a single point is 0
+        elif num_elements > 1:
+            std_val = tensor.std().item()
+        # if num_elements is 0, std_val remains 'N/A' which is fine
+            
+    print(f"  {tensor_name} - isnan: {py_has_nan}, isinf: {py_has_inf}, min: {min_val}, max: {max_val}, mean: {mean_val}, std: {std_val}, shape: {tensor.shape}")
+    if py_has_nan or py_has_inf:
         print(f"  !!! Problem detected in {tensor_name} !!!")
 
 def _build_mlp(
