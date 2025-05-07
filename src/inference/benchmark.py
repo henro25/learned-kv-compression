@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-benchmark_per_head.py   (patched 2025-05-05, adapted for per-head AE)
+benchmark_per_head.py   (patched 2025-05-07, adapted for per-head AE)
 
 Benchmarks:
   • raw-perplexity baseline
@@ -8,6 +8,7 @@ Benchmarks:
   • AE-compressed + quantised KV perplexity (per-head)
   • LongBench across bit-widths
   • Example generations
+  • Decompression speed (time to first token)
 
 Patches
 ───────
@@ -16,10 +17,12 @@ Patches
 ✔ token_loop skips steps that would propagate NaNs to the loss.
 ✔ Added explicit sanity checks + log warnings so problems surface early.
 ✔ Adaptation to load and use per-head autoencoders.
+✔ Added decompression speed to the benchmark (time to first token).
+✔ Added quantization to the raw KV-cache baseline.
 """
 
 # ─── quiet noisy logs ────────────────────────────────────────────────────
-import os, warnings, logging, json, argparse, math
+import os, warnings, logging, json, argparse, math, time
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["ABSL_MIN_LOG_LEVEL"]  = "3"
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -88,10 +91,12 @@ def resolve_dims(cfg):
 def compress_past_per_head(past, aes, bits):
     """Encode → (optional) quantise → decode each KV pair head-wise and layer-wise."""
     rebuilt = []
+    total_decode_time = 0
     for layer_idx, (k, v) in enumerate(past):
         B, H, S, D = k.shape
         layer_aes = aes[layer_idx]
         layer_rebuilt = []
+        layer_decode_time = 0
         for head_idx in range(H):
             k_head = k[:, head_idx].reshape(-1, D)
             v_head = v[:, head_idx].reshape(-1, D)
@@ -106,15 +111,18 @@ def compress_past_per_head(past, aes, bits):
                 v_lat = quantize_tensor(v_lat, bits)
 
             # decode
+            start_decode_time = time.perf_counter()
             k_rec = _sanitize(layer_aes[head_idx].decoder(k_lat)).reshape(B, S, D)
             v_rec = _sanitize(layer_aes[head_idx].decoder(v_lat)).reshape(B, S, D)
+            layer_decode_time += (time.perf_counter() - start_decode_time)
             layer_rebuilt.append((k_rec, v_rec))
 
         # Stack the rebuilt heads back together
         k_rec_stacked = torch.stack([kv[0] for kv in layer_rebuilt], dim=1)
         v_rec_stacked = torch.stack([kv[1] for kv in layer_rebuilt], dim=1)
         rebuilt.append((k_rec_stacked, v_rec_stacked))
-    return DynamicCache.from_legacy_cache(tuple(rebuilt))
+        total_decode_time += layer_decode_time
+    return DynamicCache.from_legacy_cache(tuple(rebuilt)), total_decode_time
 
 
 # ─── generation helpers ────────────────────────────────────────────────
@@ -140,10 +148,14 @@ def top_k_filter(logits, k):
 def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0, bits=None, aes=None, per_head=False):
     ids  = enc.input_ids.clone()
     last = ids[:, -1:].to(model.device)
-    for _ in range(gen_len):
+    first_token_time = None
+    for i in range(gen_len):
+        start_time = time.perf_counter()
         with torch.no_grad():
             out = model(input_ids=last, past_key_values=past, use_cache=True)
         logits, next_past = out.logits[:, -1, :], out.past_key_values
+        if i == 0:
+            first_token_time = time.perf_counter() - start_time
         if torch.isnan(logits).any():
             # logger.warning("NaNs detected in logits during generation – token skipped.")
             break
@@ -151,10 +163,12 @@ def continue_text(tokenizer, model, enc, past, *, gen_len=20, top_k=50, temp=1.0
         probs  = torch.softmax(logits, dim=-1)
         nxt    = safe_sample(probs)
         ids, last = torch.cat([ids, nxt], dim=-1), nxt
-        past = quantize_past(next_past, bits) if not aes else (
-            compress_past_per_head(next_past, aes, bits) if per_head else compress_past(next_past, aes, bits)
-        )
-    return tokenizer.decode(ids[0], skip_special_tokens=True)
+        if aes and per_head:
+            compressed_past, _ = compress_past_per_head(next_past, aes, bits)
+            past = compressed_past
+        else:
+            past = quantize_past(next_past, bits)
+    return tokenizer.decode(ids[0], skip_special_tokens=True), first_token_time
 
 
 # ─── perplexity helpers ─────────────────────────────────────────────────
@@ -181,6 +195,8 @@ def perplexity(model, tok, texts, max_len, desc):
 def token_loop_per_head(model, tok, texts, *, aes=None, bits=None, max_len=1024, desc="kv"):
     loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
     tot_loss = tot_tok = 0
+    total_decode_time = 0
+    num_steps = 0
     for txt in tqdm(texts, desc=desc):
         inp = tok(txt, return_tensors="pt", truncation=True, max_length=max_len).to(model.device)
         ids, attn = inp.input_ids, inp.attention_mask
@@ -194,17 +210,24 @@ def token_loop_per_head(model, tok, texts, *, aes=None, bits=None, max_len=1024,
             if torch.isnan(out.logits).any():  # skip corrupt step
                 # logger.warning(f"NaNs detected in logits at token {t} – skipping.")
                 continue
-            past = (compress_past_per_head(out.past_key_values, aes, bits)
-                    if aes else quantize_past(out.past_key_values, bits))
+            if aes:
+                compressed_past, decode_time = compress_past_per_head(out.past_key_values, aes, bits)
+                past = compressed_past
+                total_decode_time += decode_time
+            else:
+                past = quantize_past(out.past_key_values, bits)
             step_loss = loss_fn(out.logits[:, -1, :], ids[:, t + 1]).item()
             if math.isnan(step_loss):
                 logger.warning(f"NaN loss at token {t} – skipping.")
                 continue
             tot_loss += step_loss
             tot_tok  += 1
+            num_steps += 1
+
     if tot_tok == 0:
         raise RuntimeError(f"No valid steps for token_loop in {desc}.")
-    return math.exp(tot_loss / tot_tok)
+    avg_decode_speed = total_decode_time / num_steps if num_steps > 0 and aes else 0
+    return math.exp(tot_loss / tot_tok), avg_decode_speed
 
 # ────────────────────────────────────────────────────────────────────────
 def run_benchmark(cfg: dict):
@@ -296,20 +319,23 @@ def run_benchmark(cfg: dict):
     # per-bit benchmarks
     results["perplexities"] = {}
     for b in bits_list:
-        if b is None:
-            continue
-        kv = token_loop_per_head(
+        b_str = str(b) if b is not None else "none"
+        results["perplexities"][b_str] = {}
+
+        # KV Cache Baseline (with optional quantization)
+        kv_ppl, _ = token_loop_per_head(
             model, tok, texts,
-            bits=b, max_len=cfg["max_seq_len"], desc=f"KV{b}"
+            bits=b, max_len=cfg["max_seq_len"], desc=f"KV{b_str}"
         )
-        ae = token_loop_per_head(
+        results["perplexities"][b_str]["kv_cache_baseline_ppl"] = kv_ppl
+
+        # AE Compressed KV
+        ae_ppl, avg_decode_speed = token_loop_per_head(
             model, tok, texts,
-            aes=aes, bits=b, max_len=cfg["max_seq_len"], desc=f"AE{b}"
+            aes=aes, bits=b, max_len=cfg["max_seq_len"], desc=f"AE{b_str}"
         )
-        results["perplexities"][str(b)] = {
-            "kv_cache_baseline_ppl": kv,
-            "ae_compressed_ppl":     ae
-        }
+        results["perplexities"][b_str]["ae_compressed_ppl"] = ae_ppl
+        results["perplexities"][b_str]["avg_decompression_speed_per_token_s"] = avg_decode_speed
 
     # -------- LongBench --------------------------------------------------------
     subsets   = ["narrativeqa", "hotpotqa", "2wikimqa", "musique", "dureader"]
@@ -323,10 +349,12 @@ def run_benchmark(cfg: dict):
         for b in bits_list:
             if b is None:
                 continue
-            longbench["compressed"].setdefault(str(b), {})[s] = token_loop_per_head(
+            ae_ppl, avg_decode_speed = token_loop_per_head(
                 model, tok, txts,
                 aes=aes, bits=b, max_len=cfg["max_seq_len"], desc=f"{s}_AE{b}"
             )
+            longbench["compressed"].setdefault(str(b), {})[s] = ae_ppl
+            longbench["compressed"][str(b)].setdefault("avg_decompression_speed_per_token_s", {})[s] = avg_decode_speed
     results["longbench"] = longbench
 
     # -------- example generations ---------------------------------------------
@@ -334,21 +362,33 @@ def run_benchmark(cfg: dict):
     gen_len   = cfg.get("gen_len", 20)
     top_k     = cfg.get("top_k", 50)
     first_bit = next((b for b in bits_list if b), None) or 2
-    for prompt in texts[:5]:
+    for prompt in texts[:min(5, len(texts))]:
         enc   = tok(prompt, return_tensors="pt").to(device)
         cache = model(**enc, use_cache=True).past_key_values
-        raw   = continue_text(tok, model, enc, cache,
-                              gen_len=gen_len, top_k=top_k)
-        kv    = continue_text(tok, model, enc, cache,
-                              gen_len=gen_len, top_k=top_k, bits=first_bit)
-        ae    = continue_text(tok, model, enc,
-                              compress_past_per_head(cache, aes, first_bit),
-                              gen_len=gen_len, top_k=top_k, per_head=True)
+
+        # Raw generation
+        raw_text, _ = continue_text(tok, model, enc, cache,
+                                     gen_len=gen_len, top_k=top_k)
+
+        # Quantized KV generation
+        kv_quant_text, _ = continue_text(tok, model, enc, cache,
+                                          gen_len=gen_len, top_k=top_k, bits=first_bit)
+
+        # AE compressed generation
+        start_ae_time = time.perf_counter()
+        compressed_past, decode_time = compress_past_per_head(cache, aes, first_bit)
+        ae_compressed_text, first_token_ae_time = continue_text(tok, model, enc,
+                                                                compressed_past,
+                                                                gen_len=gen_len, top_k=top_k, per_head=True)
+        if first_token_ae_time is not None:
+            decompression_speed = decode_time # Total decompression time for the initial past
+
         examples.append({
             "prompt": prompt,
-            "raw": raw,
-            "kv_quant": kv,
-            "ae_compressed": ae
+            "raw": raw_text,
+            "kv_quant": kv_quant_text,
+            "ae_compressed": ae_compressed_text,
+            "decompression_time_first_token_s": first_token_ae_time if first_token_ae_time is not None else None
         })
     results["examples"] = examples
     results["config"]   = cfg
