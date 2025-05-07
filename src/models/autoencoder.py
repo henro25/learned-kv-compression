@@ -16,16 +16,6 @@ def _build_mlp(
     act_cls: Type[nn.Module],
     norm_cls: Optional[Type[nn.Module]] = None,
 ) -> nn.Sequential:
-    """Helper to build an MLP.
-
-    Args
-    ----
-    dims     : e.g. [in, 256, 128, 64]
-               → Linear(in→256) + (Norm) + Act → Linear(256→128) + (Norm) + Act …
-               The **last** Linear has **no** normalization or activation.
-    act_cls  : activation module class (e.g. nn.ReLU).
-    norm_cls : normalization module class (e.g. nn.LayerNorm / nn.BatchNorm1d) or None.
-    """
     layers: list[nn.Module] = []
     it = iter(dims)
     prev = next(it)
@@ -38,6 +28,9 @@ def _build_mlp(
                 layers.append(norm_cls(d))
             layers.append(act_cls())
         prev = d
+    # Add normalization after the last linear layer
+    if norm_cls is not None and len(dims) > 1:
+        layers.append(norm_cls(dims[-1]))
     return nn.Sequential(*layers)
 
 
