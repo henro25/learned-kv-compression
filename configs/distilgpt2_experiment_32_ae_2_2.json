@@ -34,5 +34,5 @@
   "cache_sizes": [1, 10, 100, 1000],
   "quantization_bits": [2, 4, 8, 16],
   "model_name": "distilgpt2",
-  "dtype": "fp16"
+  "dtype": "float32"
 }
