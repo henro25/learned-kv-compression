@@ -85,7 +85,7 @@ class Buffer():
         else:
             self.dtype = torch.float32
             
-        print(f"Buffer using data type: {self.dtype}")
+        # print(f"Buffer using data type: {self.dtype}")
         
         # Reduce buffer sequence length significantly to save memory
         buffer_size = cfg.get("buffer_size", 128)  # Default to 256 tokens instead of 512
