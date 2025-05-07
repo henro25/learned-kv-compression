@@ -228,6 +228,7 @@ def main(cfg):
             new_lr = self.optimizer.param_groups[0]['lr']
             if new_lr < old_lr:
                 self.logger.info(f"Epoch {epoch}: Reducing learning rate from {old_lr:.6f} to {new_lr:.6f}")
+                print(f"Epoch {epoch}: Reducing learning rate from {old_lr:.6f} to {new_lr:.6f}")
 
     plateau_scheduler = LoggingReduceLROnPlateau(
         optimizer,
