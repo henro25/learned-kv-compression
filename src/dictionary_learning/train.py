@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-Module Name: train.py
-Description: Train layer‑wise Autoencoders for KV Cache Compression. This module trains one autoencoder per self‑attention layer to compress the KV cache from a pretrained transformer model.
-Author: Henry Huang  •  Updated: 2025‑05‑06
+Module Name: train_per_head.py
+Description: Train head-wise and layer-wise Autoencoders for KV Cache Compression.
+             This module trains one autoencoder per self-attention head within each
+             layer to compress the KV cache from a pretrained transformer model.
+Author: Henry Huang  •  Updated: 2025-05-06 (Modified by AI Assistant)
 
 Key update
 ──────────
-• **Loss = KV reconstruction + w_attn × attention‑reconstruction (default w_attn = 1.0)**
+• **Loss = KV reconstruction + w_attn × attention-reconstruction (default w_attn = 1.0)**
 • Uses the existing `compute_attention()` helper to compute attention maps for the
   original and reconstructed KV pairs given the same queries.
+• **Modification:** Trains a separate autoencoder for each attention head in each layer.
 """
 
 import os
@@ -17,7 +20,7 @@ import random
 import json
 import pprint
 import math
-from typing import Tuple
+from typing import Tuple, List
 
 import numpy as np
 import torch
@@ -40,25 +43,23 @@ from src.models.autoencoder import Autoencoder
 from src.utils.buffer import Buffer
 
 # ────────────────────────────────────────────────────────────────────────────────
-# Helper functions
+# Helper functions (No changes needed)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def load_config(path: str):
     with open(path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
-
-    # ── sensible defaults for new keys ─────────────────────────────────────────
-    cfg.setdefault("encoder_layer_sizes", [])   # means 1‑layer encoder
+    cfg.setdefault("encoder_layer_sizes", [])
     cfg.setdefault("decoder_layer_sizes", [])
     cfg.setdefault("activation", "ReLU")
-    cfg.setdefault("attn_loss_weight", 1.0)     # weight on attention‑reconstruction
+    cfg.setdefault("attn_loss_weight", 1.0)
     return cfg
 
 
 def parse_args():
     import argparse
     parser = argparse.ArgumentParser(
-        description="Train layer‑wise Autoencoders for KV Cache Compression")
+        description="Train head-wise and layer-wise Autoencoders for KV Cache Compression")
     parser.add_argument(
         "--config", type=str,
         default="src/configs/default_config.json",
@@ -70,7 +71,7 @@ def parse_args():
 def compute_attention(q: torch.Tensor,
                       k: torch.Tensor,
                       v: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Scaled‑dot‑product attention for tensors shaped (B, L, H, S, D)."""
+    """Scaled-dot-product attention for tensors shaped (B, L, H, S, D)."""
     B, L, H, S, D = q.shape
     q2 = q.reshape(B * L * H, S, D)
     k2 = k.reshape(B * L * H, S, D)
@@ -86,7 +87,7 @@ def compute_attention(q: torch.Tensor,
 
 
 # ────────────────────────────────────────────────────────────────────────────────
-# Training
+# Training (Modified for per-head autoencoders)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def main(cfg):
@@ -104,8 +105,9 @@ def main(cfg):
         dtype = torch.float32
     print(f"Using dtype: {dtype}")
 
-    # output dir
-    os.makedirs(cfg["output_dir"], exist_ok=True)
+    # output dir (adjust for clarity)
+    output_dir = os.path.join(cfg["output_dir"], "per_head")
+    os.makedirs(output_dir, exist_ok=True)
 
     # model + tokenizer
     tokenizer = AutoTokenizer.from_pretrained(cfg["name"])
@@ -123,24 +125,29 @@ def main(cfg):
         model.resize_token_embeddings(len(tokenizer))
     model.eval()
 
-    # prepare autoencoders
+    # prepare autoencoders (now a list of lists)
     head_dim = cfg["hidden_size"] // cfg["num_attention_heads"]
+    num_heads = cfg["num_attention_heads"]
+    num_layers = cfg["num_hidden_layers"]
     autoencoders = nn.ModuleList([
-        Autoencoder(
-            input_dim=head_dim,
-            latent_dim=cfg["latent_dim"],
-            encoder_layer_sizes=cfg["encoder_layer_sizes"],
-            decoder_layer_sizes=cfg["decoder_layer_sizes"],
-            activation=cfg.get("activation", "ReLU"),
-            dtype=dtype,
-        ).to(cfg["device"])
-        for _ in range(cfg["num_hidden_layers"])
+        nn.ModuleList([
+            Autoencoder(
+                input_dim=head_dim,
+                latent_dim=cfg["latent_dim"],
+                encoder_layer_sizes=cfg["encoder_layer_sizes"],
+                decoder_layer_sizes=cfg["decoder_layer_sizes"],
+                activation=cfg.get("activation", "ReLU"),
+                dtype=dtype,
+            ).to(cfg["device"])
+            for _ in range(num_heads)
+        ])
+        for _ in range(num_layers)
     ])
 
-    # tensorboard
-    writer = SummaryWriter(log_dir=f'runs/{cfg["name"]}_{cfg["latent_dim"]}')
+    # tensorboard (adjust log directory)
+    writer = SummaryWriter(log_dir=f'runs/{cfg["name"]}_{cfg["latent_dim"]}_per_head')
 
-    # ── dataset prep ───────────────────────────────────────────────────────────
+    # ── dataset prep (No changes needed) ───────────────────────────────────────
     wiki = load_dataset("wikitext", "wikitext-103-raw-v1")
     long_texts = []
     for subset in [
@@ -170,7 +177,7 @@ def main(cfg):
     warmup_steps = int(cfg.get("warmup_ratio", 0.1) * total_steps)
 
     optimizer = AdamW(
-        [p for ae in autoencoders for p in ae.parameters()],
+        [p for layer_aes in autoencoders for head_ae in layer_aes for p in head_ae.parameters()],
         lr=cfg["lr"],
         weight_decay=cfg.get("weight_decay", 1e-3),
         betas=(0.9, 0.999),
@@ -188,24 +195,26 @@ def main(cfg):
         verbose=True,
     )
 
-    # ── training loop ──────────────────────────────────────────────────────────
+    # ── training loop (Modified for per-head autoencoders) ─────────────────────
     for epoch in range(1, cfg["num_epochs"] + 1):
-        for ae in autoencoders:
-            ae.train()
+        for layer_aes in autoencoders:
+            for head_ae in layer_aes:
+                head_ae.train()
         running_total, running_kv, running_attn = 0.0, 0.0, 0.0
 
         for step in tqdm.trange(batches_per_epoch, desc=f"Epoch {epoch}/{cfg['num_epochs']}"):
             (keys, values), queries = train_buffer.next()
-            B, L, H, S, D = keys.shape
+            B, L, H, S, D = keys.shape  # L is num_layers, H is num_heads
 
             k_rec = torch.zeros_like(keys)
             v_rec = torch.zeros_like(values)
             for l in range(L):
-                # flatten heads & seq for AE
-                k_flat, _ = autoencoders[l](keys[:, l].reshape(-1, D))
-                v_flat, _ = autoencoders[l](values[:, l].reshape(-1, D))
-                k_rec[:, l] = k_flat.reshape(B, H, S, D)
-                v_rec[:, l] = v_flat.reshape(B, H, S, D)
+                for h in range(H):
+                    # Flatten seq_len and head_dim for AE
+                    k_flat, _ = autoencoders[l][h](keys[:, l, h].reshape(-1, D))
+                    v_flat, _ = autoencoders[l][h](values[:, l, h].reshape(-1, D))
+                    k_rec[:, l, h] = k_flat.reshape(B, S, D)
+                    v_rec[:, l, h] = v_flat.reshape(B, S, D)
 
             # losses
             kv_loss = F.mse_loss(k_rec, keys) + F.mse_loss(v_rec, values)
@@ -218,7 +227,7 @@ def main(cfg):
 
             if ((step + 1) % cfg["gradient_accumulation_steps"] == 0) or (step + 1 == batches_per_epoch):
                 torch.nn.utils.clip_grad_norm_(
-                    [p for ae in autoencoders for p in ae.parameters() if p.grad is not None],
+                    [p for layer_aes in autoencoders for head_ae in layer_aes for p in head_ae.parameters() if p.grad is not None],
                     max_norm=cfg.get("max_grad_norm", 1.0),
                 )
                 optimizer.step()
@@ -246,9 +255,10 @@ def main(cfg):
             'attn': avg_attn,
         }, epoch)
 
-        # ── validation ──────────────────────────────────────────────────────────
-        for ae in autoencoders:
-            ae.eval()
+        # ── validation (Modified for per-head autoencoders) ────────────────────
+        for layer_aes in autoencoders:
+            for head_ae in layer_aes:
+                head_ae.eval()
         val_totals, val_kvs, val_attns = [], [], []
 
         with torch.no_grad():
@@ -259,10 +269,11 @@ def main(cfg):
                 k_rec = torch.zeros_like(keys)
                 v_rec = torch.zeros_like(values)
                 for l in range(L):
-                    k_flat, _ = autoencoders[l](keys[:, l].reshape(-1, D))
-                    v_flat, _ = autoencoders[l](values[:, l].reshape(-1, D))
-                    k_rec[:, l] = k_flat.reshape(B, H, S, D)
-                    v_rec[:, l] = v_flat.reshape(B, H, S, D)
+                    for h in range(H):
+                        k_flat, _ = autoencoders[l][h](keys[:, l, h].reshape(-1, D))
+                        v_flat, _ = autoencoders[l][h](values[:, l, h].reshape(-1, D))
+                        k_rec[:, l, h] = k_flat.reshape(B, S, D)
+                        v_rec[:, l, h] = v_flat.reshape(B, S, D)
 
                 kv_loss = F.mse_loss(k_rec, keys) + F.mse_loss(v_rec, values)
                 _, attn_orig = compute_attention(queries, keys, values)
@@ -287,13 +298,23 @@ def main(cfg):
         # LR scheduling
         plateau_scheduler.step(avg_val_total)
 
-        # save checkpoint per epoch
-        ckpt = {f"layer_{i}": ae.state_dict() for i, ae in enumerate(autoencoders)}
-        torch.save(ckpt, os.path.join(cfg["output_dir"], f"autoencoders_epoch_{epoch}.pth"))
+        # save checkpoint per epoch (now saving a nested dictionary)
+        ckpt = {
+            f"layer_{l}": {
+                f"head_{h}": autoencoders[l][h].state_dict() for h in range(num_heads)
+            }
+            for l in range(num_layers)
+        }
+        torch.save(ckpt, os.path.join(output_dir, f"autoencoders_epoch_{epoch}.pth"))
 
-    # ── final save ─────────────────────────────────────────────────────────────
-    final_ckpt = {f"layer_{i}": ae.state_dict() for i, ae in enumerate(autoencoders)}
-    torch.save(final_ckpt, os.path.join(cfg["output_dir"], "autoencoders_final.pth"))
+    # ── final save (now saving a nested dictionary) ───────────────────────────
+    final_ckpt = {
+        f"layer_{l}": {
+            f"head_{h}": autoencoders[l][h].state_dict() for h in range(num_heads)
+        }
+        for l in range(num_layers)
+    }
+    torch.save(final_ckpt, os.path.join(output_dir, "autoencoders_final.pth"))
     print("Training complete!")
     writer.close()
 
