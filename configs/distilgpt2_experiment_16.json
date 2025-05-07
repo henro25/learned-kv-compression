@@ -21,10 +21,15 @@
   "lr_patience": 1,
   "eval_interval": 1,
   "config": "configs/distilgpt2_experiment_16.json",
-  "output_dir": "models",
   "num_train_texts": 10000,
-  "num_eval_texts": 50,
+  "num_eval_texts": 10,
   "device": "cuda",
-  "max_seq_len": 256
+  
+  "max_seq_len": 1024,
+
+  "autoencoder_path": "experiment_results_distilgpt2/autoencoders_final_distilgpt2_latent_16_per_head.pth",
+  "output_dir": "experiment_results_distilgpt2",
+  "vocab_size": 50257,
+  "cache_sizes": [1, 10, 100, 1000]
 }
   
