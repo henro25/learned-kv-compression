@@ -2,11 +2,11 @@
   "name": "distilgpt2",
   "input_dim": 64,
   "latent_dim": 16,
-  "batch_size": 2,
-  "num_epochs": 5,
+  "batch_size": 64,
+  "num_epochs": 10,
   "hidden_size": 768,
-  "encoder_layer_sizes": [32, 32],
-  "decoder_layer_sizes": [32],
+  "encoder_layer_sizes": [16],
+  "decoder_layer_sizes": [],
   "activation": "GELU",
   "gradient_accumulation_steps": 2,
   "lr": 0.001,
@@ -21,10 +21,18 @@
   "lr_patience": 1,
   "eval_interval": 1,
   "config": "configs/distilgpt2_experiment_16.json",
-  "output_dir": "models",
-  "num_train_texts": 25000,
-  "num_eval_texts": 50,
+  "num_train_texts": 20000,
+  "num_eval_texts": 10,
   "device": "cuda",
-  "max_seq_len": 256
+  
+  "max_seq_len": 1024,
+
+  "autoencoder_path": "experiment_results_distilgpt2/asym/autoencoders_final_distilgpt2_latent_16_ae_2_1.pth",
+  "output_dir": "experiment_results_distilgpt2",
+  "vocab_size": 50257,
+  "cache_sizes": [1, 10, 100, 1000],
+  "quantization_bits": [2, 4, 8, 16],
+  "model_name": "distilgpt2",
+  "dtype": "fp16"
 }
   

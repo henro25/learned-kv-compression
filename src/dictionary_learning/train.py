@@ -331,8 +331,10 @@ def main(cfg):
         }
         for l in range(num_layers)
     }
-    torch.save(final_ckpt, os.path.join(output_dir, "autoencoders_final.pth"))
-    print("Training complete!")
+    final_save_path = cfg["autoencoder_path"]
+    os.makedirs(os.path.dirname(final_save_path), exist_ok=True) # Ensure the directory exists
+    torch.save(final_ckpt, final_save_path)
+    print(f"Training complete! Autoencoders saved to: {final_save_path}")
     writer.close()
 
 
