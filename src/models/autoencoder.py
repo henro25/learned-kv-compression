@@ -58,9 +58,6 @@ def _build_mlp(
                 layers.append(norm_cls(d))
             layers.append(act_cls())
         prev = d
-    # Add normalization after the last linear layer
-    if norm_cls is not None and len(dims) > 1:
-        layers.append(norm_cls(dims[-1]))
     return nn.Sequential(*layers)
 
 
