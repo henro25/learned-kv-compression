@@ -281,7 +281,7 @@ def main(cfg):
             # logging
             running_total += total_loss.item() * B
             running_kv    += kv_loss.item() * B
-            running_attn  += attn_loss.running_attn  += attn_loss.item() * B
+            running_attn  += attn_loss.item() * B
             glb_step = (epoch - 1) * batches_per_epoch + step
             writer.add_scalar('Loss/train_total_step', total_loss.item(), glb_step)
             writer.add_scalar('Loss/train_kv_step', kv_loss.item(), glb_step)
