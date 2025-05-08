@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+"""
+Module Name: train_per_head.py
+Description: Train head-wise Autoencoders for KV Cache Compression, with attention-loss gradients.
+Author: Henry Huang (modified)
+Date: 2025-05-07
+"""
+
 import os
 import sys
 import random
@@ -27,119 +35,87 @@ from transformers import (
 from src.models.autoencoder import Autoencoder
 from src.utils.buffer import Buffer
 
-# print("Script started at the top level") # <--- ADD THIS
-
 # ────────────────────────────────────────────────────────────────────────────────
-# Helper functions (No changes needed)
+# Helper functions
 # ────────────────────────────────────────────────────────────────────────────────
 
 def load_config(path: str):
     with open(path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
+    # defaults
     cfg.setdefault("encoder_layer_sizes", [])
     cfg.setdefault("decoder_layer_sizes", [])
     cfg.setdefault("activation", "ReLU")
     cfg.setdefault("attn_loss_weight", 1.0)
-    # print(f"Loaded config: {cfg}") # <--- ADD THIS
+    cfg.setdefault("kv_loss_weight", 0.0)  # set to 0 if you only want attention loss
     return cfg
-
 
 def parse_args():
     import argparse
     parser = argparse.ArgumentParser(
-        description="Train head-wise and layer-wise Autoencoders for KV Cache Compression")
+        description="Train head-wise Autoencoders for KV Cache Compression"
+    )
     parser.add_argument(
         "--config", type=str,
         default="src/configs/default_config.json",
         help="Path to config file")
     return vars(parser.parse_args())
 
-
-@torch.no_grad()
 def compute_attention(q: torch.Tensor,
                       k: torch.Tensor,
                       v: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """Scaled-dot-product attention for tensors shaped (B, L, H, S, D)."""
-    # print("Entering compute_attention")
-    # print(f"q.shape: {q.shape}")
-    # print(f"k.shape: {k.shape}")
-    # print(f"v.shape: {v.shape}")
     B, L, H, S, D = q.shape
-    # print(f"B: {B}, L: {L}, H: {H}, S: {S}, D: {D}")
-
-    if D == 0:
-        print("Warning: Head dimension D is zero!")
-        return torch.zeros_like(v), torch.zeros((B, L, H, S, S), dtype=v.dtype, device=v.device)
-
     q2 = q.reshape(B * L * H, S, D)
     k2 = k.reshape(B * L * H, S, D)
     v2 = v.reshape(B * L * H, S, D)
-    # print(f"q2.shape: {q2.shape}")
-    # print(f"k2.shape: {k2.shape}")
-    # print(f"v2.shape: {v2.shape}")
 
-    scores = torch.matmul(q2, k2.transpose(-2, -1)) / math.sqrt(D)   # (B*L*H, S, S)
-    # print(f"scores.shape: {scores.shape}")
+    scores = torch.matmul(q2, k2.transpose(-2, -1)) / math.sqrt(D)
     attn_weights = F.softmax(scores, dim=-1)
-    # print(f"attn_weights.shape: {attn_weights.shape}")
-    output = torch.matmul(attn_weights, v2)                          # (B*L*H, S, D)
-    # print(f"output.shape (before reshape): {output.shape}")
+    output = torch.matmul(attn_weights, v2)
 
     attn_weights = attn_weights.reshape(B, L, H, S, S)
     output       = output.reshape(B, L, H, S, D)
-    # print(f"output.shape (after reshape): {output.shape}")
-    # print("Exiting compute_attention")
     return output, attn_weights
 
-
 # ────────────────────────────────────────────────────────────────────────────────
-# Training (Modified for per-head autoencoders)
+# Training (per-head autoencoders)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def main(cfg):
-    # print("Entered the main function") # <--- ADD THIS
     # reproducibility
     torch.manual_seed(cfg["seed"])
     np.random.seed(cfg["seed"])
     random.seed(cfg["seed"])
 
-    # dtype
+    # dtype selection
     dtype = torch.float32
     if cfg.get("dtype") == "bf16":
         dtype = torch.bfloat16
     elif cfg.get("dtype") in ("fp16", "f16"):
         dtype = torch.float16
-    # print(f"Using dtype: {dtype}")
-    # print(f"CUDA available: {torch.cuda.is_available()}") # <--- ADD THIS
-    # print(f"CUDA device count: {torch.cuda.device_count()}") # <--- ADD THIS
-    # print(f"Device: {cfg['device']}") # <--- ADD THIS
 
-    # output dir (adjust for clarity)
+    # output dir
     output_dir = os.path.join(cfg["output_dir"], "per_head")
     os.makedirs(output_dir, exist_ok=True)
 
-    # model + tokenizer
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(cfg["name"])
-        model = AutoModelForCausalLM.from_pretrained(
-            cfg["name"],
-            trust_remote_code=cfg["name"].startswith("Qwen"),
-            torch_dtype=dtype,
-            device_map={"": cfg["device"]},
-            output_hidden_states=True,
-            output_attentions=True,
-            use_cache=True,
-        )
-        if tokenizer.pad_token is None:
-            tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-            model.resize_token_embeddings(len(tokenizer))
-        model.eval()
-        # print("Model and tokenizer loaded successfully") # <--- ADD THIS
-    except Exception as e:
-        print(f"Error loading model/tokenizer: {e}")
-        return
+    # load model & tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(cfg["name"])
+    model = AutoModelForCausalLM.from_pretrained(
+        cfg["name"],
+        trust_remote_code=cfg["name"].startswith("Qwen"),
+        torch_dtype=dtype,
+        device_map={"": cfg["device"]},
+        output_hidden_states=True,
+        output_attentions=True,
+        use_cache=True,
+    )
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+        model.resize_token_embeddings(len(tokenizer))
+    model.eval()
 
-    # prepare autoencoders (now a list of lists)
+    # initialize autoencoders: [layers][heads]
     head_dim = cfg["hidden_size"] // cfg["num_attention_heads"]
     num_heads = cfg["num_attention_heads"]
     num_layers = cfg["num_hidden_layers"]
@@ -157,53 +133,39 @@ def main(cfg):
         ])
         for _ in range(num_layers)
     ])
-    # print("Autoencoders initialized") # <--- ADD THIS
 
-    # tensorboard (adjust log directory)
+    # TensorBoard
     writer = SummaryWriter(log_dir=f'runs/{cfg["name"]}_{cfg["latent_dim"]}_per_head')
 
-    # ── dataset prep (No changes needed) ───────────────────────────────────────
-    try:
-        wiki = load_dataset("wikitext", "wikitext-103-raw-v1")
-        long_texts = []
-        for subset in [
-            'narrativeqa', 'hotpotqa', '2wikimqa', 'musique', 'dureader']:
-            try:
-                ds = load_dataset("THUDM/LongBench", subset)
-                long_texts.extend(ds["test"]["input"])
-            except Exception as e:
-                print(f"Error loading LongBench subset {subset}: {e}")
+    # load datasets
+    wiki = load_dataset("wikitext", "wikitext-103-raw-v1")
+    long_texts = []
+    for subset in ['narrativeqa', 'hotpotqa', '2wikimqa', 'musique', 'dureader']:
+        try:
+            ds = load_dataset("THUDM/LongBench", subset)
+            long_texts.extend(ds["test"]["input"])
+        except Exception:
+            pass
 
-        all_train = [t for t in wiki["train"]["text"] if t.strip()]
-        n_w = int(cfg["num_train_texts"] * 0.7)
-        n_l = cfg["num_train_texts"] - n_w
-        train_texts = all_train[:min(n_w, len(all_train))] + \
-                     [t for t in long_texts if t.strip()][:min(n_l, len(long_texts))]
+    all_train = [t for t in wiki["train"]["text"] if t.strip()]
+    n_w = int(cfg["num_train_texts"] * 0.7)
+    n_l = cfg["num_train_texts"] - n_w
+    train_texts = all_train[:min(n_w, len(all_train))] + \
+                  [t for t in long_texts if t.strip()][:min(n_l, len(long_texts))]
+    val_size = int(len(train_texts) * cfg.get("val_split", 0.1))
+    texts_val   = train_texts[:val_size]
+    texts_train = train_texts[val_size:]
 
-        val_size = int(len(train_texts) * cfg.get("val_split", 0.1))
-        texts_val   = train_texts[:val_size]
-        texts_train = train_texts[val_size:]
-        print(f"Number of training texts: {len(texts_train)}") # <--- ADD THIS
-        print(f"Number of validation texts: {len(texts_val)}") # <--- ADD THIS
-    except Exception as e:
-        print(f"Error loading dataset: {e}")
-        return
+    train_buffer = Buffer(cfg, model, tokenizer, texts_train)
+    val_buffer   = Buffer(cfg, model, tokenizer, texts_val)
 
-    try:
-        train_buffer = Buffer(cfg, model, tokenizer, texts_train)
-        val_buffer   = Buffer(cfg, model, tokenizer, texts_val)
-        # print("Buffers initialized") # <--- ADD THIS
-    except Exception as e:
-        print(f"Error initializing buffer: {e}")
-        return
-
-    # ── optimisers & schedulers ────────────────────────────────────────────────
+    # optimizer & schedulers
     batches_per_epoch = len(texts_train) // cfg["batch_size"]
     total_steps = (batches_per_epoch // cfg["gradient_accumulation_steps"]) * cfg["num_epochs"]
     warmup_steps = int(cfg.get("warmup_ratio", 0.1) * total_steps)
 
     optimizer = AdamW(
-        [p for layer_aes in autoencoders for head_ae in layer_aes for p in head_ae.parameters()],
+        [p for layer in autoencoders for head in layer for p in head.parameters()],
         lr=cfg["lr"],
         weight_decay=cfg.get("weight_decay", 1e-3),
         betas=(0.9, 0.999),
@@ -213,200 +175,138 @@ def main(cfg):
         num_warmup_steps=warmup_steps,
         num_training_steps=total_steps,
     )
-
-    class LoggingReduceLROnPlateau(ReduceLROnPlateau):
-        def __init__(self, optimizer, mode='min', factor=0.5, patience=1,
-                     threshold=1e-4, threshold_mode='rel', cooldown=0,
-                     min_lr=0, eps=1e-8, verbose=False):
-            super().__init__(optimizer, mode, factor, patience, threshold, threshold_mode,
-                             cooldown, min_lr, eps, verbose)
-            self.logger = logging.getLogger(__name__)
-
-        def _reduce_lr(self, epoch):
-            old_lr = self.optimizer.param_groups[0]['lr']
-            super()._reduce_lr(epoch)
-            new_lr = self.optimizer.param_groups[0]['lr']
-            if new_lr < old_lr:
-                self.logger.info(f"Epoch {epoch}: Reducing learning rate from {old_lr:.6f} to {new_lr:.6f}")
-                print(f"Epoch {epoch}: Reducing learning rate from {old_lr:.6f} to {new_lr:.6f}")
-
-    plateau_scheduler = LoggingReduceLROnPlateau(
+    plateau_scheduler = ReduceLROnPlateau(
         optimizer,
         mode='min',
         factor=cfg.get("lr_reduce_factor", 0.5),
         patience=cfg.get("lr_patience", 1),
-        verbose=False  # Set verbose to False here
+        verbose=True
     )
-    # print("Optimizer and schedulers initialized") # <--- ADD THIS
 
-    # ── training loop (Modified for per-head autoencoders) ─────────────────────
-    for epoch in range(1, cfg["num_epochs"] + 1):
-        # print(f"Starting epoch {epoch}") # <--- ADD THIS
-        for layer_aes in autoencoders:
-            for head_ae in layer_aes:
-                head_ae.train()
+    # training loop
+    for epoch in range(1, cfg["num_epochs"]+1):
+        for layer in autoencoders:
+            for head in layer:
+                head.train()
+
         running_total, running_kv, running_attn = 0.0, 0.0, 0.0
 
         for step in tqdm.trange(batches_per_epoch, desc=f"Epoch {epoch}/{cfg['num_epochs']}"):
-            # print(f"Starting step {step}") # <--- ADD THIS
             (keys, values), queries = train_buffer.next()
-            B, L, H, S, D = keys.shape  # L is num_layers, H is num_heads
+            B, L, H, S, D = keys.shape
 
+            # reconstruct K & V
             k_rec = torch.zeros_like(keys)
             v_rec = torch.zeros_like(values)
             for l in range(L):
                 for h in range(H):
-                    key_slice = keys[:, l, h]
-                    value_slice = values[:, l, h]
+                    k_flat, _ = autoencoders[l][h](keys[:,l,h].reshape(-1, D))
+                    v_flat, _ = autoencoders[l][h](values[:,l,h].reshape(-1, D))
+                    k_rec[:,l,h] = k_flat.reshape(B, S, D)
+                    v_rec[:,l,h] = v_flat.reshape(B, S, D)
 
-                    # print(f"Layer {l}, Head {h}:")
-                    # print(f"  keys_slice - isnan: {torch.isnan(key_slice).any()}, isinf: {torch.isinf(key_slice).any()}, min: {key_slice.min().item():.4f}, max: {key_slice.max().item():.4f}")
-                    # print(f"  values_slice - isnan: {torch.isnan(value_slice).any()}, isinf: {torch.isinf(value_slice).any()}, min: {value_slice.min().item():.4f}, max: {value_slice.max().item():.4f}")
-
-                    # Flatten seq_len and head_dim for AE
-                    k_flat, _ = autoencoders[l][h](key_slice.reshape(-1, D))
-                    v_flat, _ = autoencoders[l][h](value_slice.reshape(-1, D))
-
-                    # print(f"  k_flat - isnan: {torch.isnan(k_flat).any()}, isinf: {torch.isinf(k_flat).any()}, min: {k_flat.min().item():.4f}, max: {k_flat.max().item():.4f}")
-                    # print(f"  v_flat - isnan: {torch.isnan(v_flat).any()}, isinf: {torch.isinf(v_flat).any()}, min: {v_flat.min().item():.4f}, max: {v_flat.max().item():.4f}")
-
-                    k_rec[:, l, h] = k_flat.reshape(B, S, D)
-                    v_rec[:, l, h] = v_flat.reshape(B, S, D)
-
-            # losses
-            # print("Checking for NaNs/Infs before KV loss:")
-            # print(f"isnan(k_rec).any(): {torch.isnan(k_rec).any()}")
-            # print(f"isinf(k_rec).any(): {torch.isinf(k_rec).any()}")
-            # print(f"isnan(keys).any(): {torch.isnan(keys).any()}")
-            # print(f"isinf(keys).any(): {torch.isinf(keys).any()}")
-            # print(f"isnan(v_rec).any(): {torch.isnan(v_rec).any()}")
-            # print(f"isinf(v_rec).any(): {torch.isinf(v_rec).any()}")
-            # print(f"isnan(values).any(): {torch.isnan(values).any()}")
-            # print(f"isinf(values).any(): {torch.isinf(values).any()}")
-
+            # KV loss
             kv_loss = F.mse_loss(k_rec, keys) + F.mse_loss(v_rec, values)
 
-            # Compute attention *before* checking for NaNs/Infs
-            _, attn_orig = compute_attention(queries, keys, values)
-            _, attn_rec  = compute_attention(queries, k_rec, v_rec)
+            # Attention loss: detach original
+            with torch.no_grad():
+                _, attn_orig = compute_attention(queries, keys, values)
+            attn_orig = attn_orig.detach()
+            _, attn_rec = compute_attention(queries, k_rec, v_rec)
             attn_loss = F.mse_loss(attn_rec, attn_orig)
 
-            # print("Checking for NaNs/Infs before attention loss:")
-            # print(f"isnan(queries).any(): {torch.isnan(queries).any()}")
-            # print(f"isinf(queries).any(): {torch.isinf(queries).any()}")
-            # print(f"isnan(attn_orig).any(): {torch.isnan(attn_orig).any()}")
-            # print(f"isinf(attn_orig).any(): {torch.isinf(attn_orig).any()}")
-            # print(f"isnan(attn_rec).any(): {torch.isnan(attn_rec).any()}")
-            # print(f"isinf(attn_rec).any(): {torch.isinf(attn_rec).any()}")
-
-            # print(f"isnan(kv_loss): {torch.isnan(kv_loss)}")
-            # print(f"isinf(kv_loss): {torch.isinf(kv_loss)}")
-            # print(f"isnan(attn_loss): {torch.isnan(attn_loss)}")
-            # print(f"isinf(attn_loss): {torch.isinf(attn_loss)}")
-
-            total_loss = kv_loss * 0 + attn_loss * 1
-            # print(f"isnan(total_loss): {torch.isnan(total_loss)}")
-            # print(f"isinf(total_loss): {torch.isinf(total_loss)}")
-
+            # combined loss
+            total_loss = kv_loss * cfg["kv_loss_weight"] + attn_loss * cfg["attn_loss_weight"]
             (total_loss / cfg["gradient_accumulation_steps"]).backward()
 
-            if ((step + 1) % cfg["gradient_accumulation_steps"] == 0) or (step + 1 == batches_per_epoch):
+            # step optimizer
+            if ((step+1) % cfg["gradient_accumulation_steps"] == 0) or (step+1 == batches_per_epoch):
                 torch.nn.utils.clip_grad_norm_(
-                    [p for layer_aes in autoencoders for head_ae in layer_aes for p in head_ae.parameters() if p.grad is not None],
+                    [p for layer in autoencoders for head in layer for p in head.parameters() if p.grad is not None],
                     max_norm=cfg.get("max_grad_norm", 1.0),
                 )
                 optimizer.step()
                 cosine_scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
 
-            # logging
             running_total += total_loss.item() * B
-            running_kv    += kv_loss.item() * B
+            running_kv    += kv_loss.item()  * B
             running_attn  += attn_loss.item() * B
-            glb_step = (epoch - 1) * batches_per_epoch + step
+            glb_step = (epoch-1)*batches_per_epoch + step
             writer.add_scalar('Loss/train_total_step', total_loss.item(), glb_step)
             writer.add_scalar('Loss/train_kv_step', kv_loss.item(), glb_step)
             writer.add_scalar('Loss/train_attn_step', attn_loss.item(), glb_step)
-            # print(f"Finished step {step}") # <--- ADD THIS
 
+        # epoch logging
         denom = batches_per_epoch * cfg["batch_size"]
         avg_total = running_total / denom
-        avg_kv    = running_kv / denom
-        avg_attn  = running_attn / denom
-
+        avg_kv    = running_kv    / denom
+        avg_attn  = running_attn  / denom
         print(f"[Epoch {epoch}] Train → total={avg_total:.4f}, kv={avg_kv:.4f}, attn={avg_attn:.4f}")
         writer.add_scalars('Loss/train_epoch', {
-            'total': avg_total,
-            'kv': avg_kv,
-            'attn': avg_attn,
+            'total': avg_total, 'kv': avg_kv, 'attn': avg_attn
         }, epoch)
 
-        # ── validation (Modified for per-head autoencoders) ────────────────────
-        for layer_aes in autoencoders:
-            for head_ae in layer_aes:
-                head_ae.eval()
+        # validation
+        for layer in autoencoders:
+            for head in layer:
+                head.eval()
         val_totals, val_kvs, val_attns = [], [], []
-
         with torch.no_grad():
-            for _ in range(min(batches_per_epoch // 5, 20)):
+            for _ in range(min(batches_per_epoch//5, 20)):
                 (keys, values), queries = val_buffer.next()
                 B, L, H, S, D = keys.shape
-
                 k_rec = torch.zeros_like(keys)
                 v_rec = torch.zeros_like(values)
                 for l in range(L):
                     for h in range(H):
-                        k_flat, _ = autoencoders[l][h](keys[:, l, h].reshape(-1, D))
-                        v_flat, _ = autoencoders[l][h](values[:, l, h].reshape(-1, D))
-                        k_rec[:, l, h] = k_flat.reshape(B, S, D)
-                        v_rec[:, l, h] = v_flat.reshape(B, S, D)
+                        k_flat, _ = autoencoders[l][h](keys[:,l,h].reshape(-1, D))
+                        v_flat, _ = autoencoders[l][h](values[:,l,h].reshape(-1, D))
+                        k_rec[:,l,h] = k_flat.reshape(B, S, D)
+                        v_rec[:,l,h] = v_flat.reshape(B, S, D)
 
                 kv_loss = F.mse_loss(k_rec, keys) + F.mse_loss(v_rec, values)
                 _, attn_orig = compute_attention(queries, keys, values)
                 _, attn_rec  = compute_attention(queries, k_rec, v_rec)
                 attn_loss = F.mse_loss(attn_rec, attn_orig)
+                total = kv_loss*cfg["kv_loss_weight"] + attn_loss*cfg["attn_loss_weight"]
 
-                val_totals.append(kv_loss.item() * 0 + attn_loss.item() * 1)
+                val_totals.append(total.item())
                 val_kvs.append(kv_loss.item())
                 val_attns.append(attn_loss.item())
 
         avg_val_total = float(np.mean(val_totals))
         avg_val_kv    = float(np.mean(val_kvs))
         avg_val_attn  = float(np.mean(val_attns))
-
         print(f"[Epoch {epoch}] Val   → total={avg_val_total:.4f}, kv={avg_val_kv:.4f}, attn={avg_val_attn:.4f}")
         writer.add_scalars('Loss/val_epoch', {
-            'total': avg_val_total,
-            'kv': avg_val_kv,
-            'attn': avg_val_attn,
+            'total': avg_val_total, 'kv': avg_val_kv, 'attn': avg_val_attn
         }, epoch)
 
-        # LR scheduling
         plateau_scheduler.step(avg_val_total)
 
-        # save checkpoint per epoch (now saving a nested dictionary)
+        # save checkpoint
         ckpt = {
             f"layer_{l}": {
-                f"head_{h}": autoencoders[l][h].state_dict() for h in range(num_heads)
+                f"head_{h}": autoencoders[l][h].state_dict()
+                for h in range(num_heads)
             }
             for l in range(num_layers)
         }
         torch.save(ckpt, os.path.join(output_dir, f"autoencoders_epoch_{epoch}.pth"))
-        # print(f"Finished epoch {epoch}") # <--- ADD THIS
 
-    # ── final save (now saving a nested dictionary) ───────────────────────────
+    # final save
     final_ckpt = {
         f"layer_{l}": {
-            f"head_{h}": autoencoders[l][h].state_dict() for h in range(num_heads)
+            f"head_{h}": autoencoders[l][h].state_dict()
+            for h in range(num_heads)
         }
         for l in range(num_layers)
     }
-    final_save_path = cfg["autoencoder_path"]
-    os.makedirs(os.path.dirname(final_save_path), exist_ok=True) # Ensure the directory exists
-    torch.save(final_ckpt, final_save_path)
-    print(f"Training complete! Autoencoders saved to: {final_save_path}")
+    os.makedirs(os.path.dirname(cfg["autoencoder_path"]), exist_ok=True)
+    torch.save(final_ckpt, cfg["autoencoder_path"])
+    print(f"Training complete! Saved to {cfg['autoencoder_path']}")
     writer.close()
-
 
 if __name__ == "__main__":
     args = parse_args()
