@@ -304,7 +304,7 @@ def main(cfg):
             # print(f"isnan(attn_loss): {torch.isnan(attn_loss)}")
             # print(f"isinf(attn_loss): {torch.isinf(attn_loss)}")
 
-            total_loss = kv_loss * 1 + attn_loss * 0
+            total_loss = kv_loss * 0 + attn_loss * 1
             # print(f"isnan(total_loss): {torch.isnan(total_loss)}")
             # print(f"isinf(total_loss): {torch.isinf(total_loss)}")
 
@@ -366,7 +366,7 @@ def main(cfg):
                 _, attn_rec  = compute_attention(queries, k_rec, v_rec)
                 attn_loss = F.mse_loss(attn_rec, attn_orig)
 
-                val_totals.append(kv_loss.item() * 1 + attn_loss.item() * 0)
+                val_totals.append(kv_loss.item() * 0 + attn_loss.item() * 1)
                 val_kvs.append(kv_loss.item())
                 val_attns.append(attn_loss.item())
 
