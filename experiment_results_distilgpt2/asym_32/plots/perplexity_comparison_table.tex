@@ -1,0 +1,13 @@
+\begin{table}
+\caption{Perplexity Comparison: Symmetric and Asymmetric AEs vs. Raw Quantization Levels}
+\label{tab:perplexity_comparison_all_quant}
+\begin{tabular}{rllllllll}
+\toprule
+Latent Dim & Dataset & AE Type & AE PPL & Raw (32-bit) PPL & Raw (2-bit) PPL & Raw (4-bit) PPL & Raw (8-bit) PPL & Raw (16-bit) PPL \\
+\midrule
+8 & WikiText & Symmetric AE & 5049.08 & 76.19 & 1310.36 & 104.02 & 76.30 & 76.19 \\
+16 & WikiText & Symmetric AE & 2192.71 & 72.66 & 1150.16 & 97.59 & 72.62 & 72.65 \\
+32 & WikiText & Symmetric AE & 167.00 & 72.66 & 1150.16 & 97.59 & 72.62 & 72.65 \\
+\bottomrule
+\end{tabular}
+\end{table}
