@@ -1,35 +1,74 @@
 {
   "raw_baseline_ppl": 72.65527617984746,
+  "raw_baseline_overhead_per_token_s": 0.0016658421147960096,
+  "memory_footprint_mb": {
+    "float32_kv_cache": 0.28125,
+    "int2_kv_cache": 0.017578125,
+    "ae_int2_compressed_kv_cache": 0.0087890625,
+    "int4_kv_cache": 0.03515625,
+    "ae_int4_compressed_kv_cache": 0.017578125,
+    "int8_kv_cache": 0.0703125,
+    "ae_int8_compressed_kv_cache": 0.03515625,
+    "int16_kv_cache": 0.140625,
+    "ae_int16_compressed_kv_cache": 0.0703125,
+    "int32_kv_cache": 0.28125,
+    "ae_int32_compressed_kv_cache": 0.140625,
+    "generation": {
+      "ae_intNone_compressed_kv_cache": 0.017578125,
+      "int2_kv_cache": 0.002197265625,
+      "ae_int2_compressed_kv_cache": 0.0010986328125,
+      "int4_kv_cache": 0.00439453125,
+      "ae_int4_compressed_kv_cache": 0.002197265625,
+      "int8_kv_cache": 0.0087890625,
+      "ae_int8_compressed_kv_cache": 0.00439453125,
+      "int16_kv_cache": 0.017578125,
+      "ae_int16_compressed_kv_cache": 0.0087890625,
+      "int32_kv_cache": 0.03515625,
+      "ae_int32_compressed_kv_cache": 0.017578125
+    }
+  },
   "perplexities": {
     "none": {
       "kv_cache_baseline_ppl": 72.65526145159056,
-      "ae_compressed_ppl": 2176.1245039026635,
-      "avg_decompression_speed_per_token_s": 0.029276312775420723
+      "kv_cache_baseline_overhead_per_token_s": 0.006912121068874243,
+      "ae_compressed_ppl": 275.1245039026635,
+      "avg_decompression_speed_per_token_s": 0.09142993403315204,
+      "ae_compressed_overhead_per_token_s": 0.008197923553572042
     },
     "2": {
       "kv_cache_baseline_ppl": 1150.1580654764437,
-      "ae_compressed_ppl": 8679.148231472025,
-      "avg_decompression_speed_per_token_s": 0.03365997377291627
+      "kv_cache_baseline_overhead_per_token_s": 0.009896994102044115,
+      "ae_compressed_ppl": 979.148231472025,
+      "avg_decompression_speed_per_token_s": 0.14551723405357195,
+      "ae_compressed_overhead_per_token_s": 0.00890013358928671
     },
     "4": {
       "kv_cache_baseline_ppl": 97.59075160304072,
+      "kv_cache_baseline_overhead_per_token_s": 0.010345790323981564,
       "ae_compressed_ppl": 456.59604977659234,
-      "avg_decompression_speed_per_token_s": 0.03451909436478914
+      "avg_decompression_speed_per_token_s": 0.14627981026020148,
+      "ae_compressed_overhead_per_token_s": 0.007730247426020231
     },
     "8": {
       "kv_cache_baseline_ppl": 72.62027976428664,
-      "ae_compressed_ppl": 1902.298864424699,
-      "avg_decompression_speed_per_token_s": 0.0338308241581537
+      "kv_cache_baseline_overhead_per_token_s": 0.009550155875002811,
+      "ae_compressed_ppl": 280.298864424699,
+      "avg_decompression_speed_per_token_s": 0.14541751111227028,
+      "ae_compressed_overhead_per_token_s": 0.009531022010205224
     },
     "16": {
       "kv_cache_baseline_ppl": 72.65478507791465,
-      "ae_compressed_ppl": 2175.4183840650726,
-      "avg_decompression_speed_per_token_s": 0.03383595543616199
+      "kv_cache_baseline_overhead_per_token_s": 0.01094964879336402,
+      "ae_compressed_ppl": 275.4183840650726,
+      "avg_decompression_speed_per_token_s": 0.14286150764541838,
+      "ae_compressed_overhead_per_token_s": 0.007582138410711826
     },
     "32": {
       "kv_cache_baseline_ppl": 72.65523378330623,
-      "ae_compressed_ppl": 2176.1275043333644,
-      "avg_decompression_speed_per_token_s": 0.03365059129593324
+      "kv_cache_baseline_overhead_per_token_s": 0.01104698141326348,
+      "ae_compressed_ppl": 275.1275043333644,
+      "avg_decompression_speed_per_token_s": 0.14523610577293766,
+      "ae_compressed_overhead_per_token_s": 0.007634458882653617
     }
   },
   "longbench": {
@@ -42,112 +81,112 @@
     },
     "compressed": {
       "2": {
-        "narrativeqa": 13415.014897660862,
+        "narrativeqa": 2085.014897660862,
         "avg_decompression_speed_per_token_s": {
-          "narrativeqa": 0.032146733822193914,
-          "hotpotqa": 0.03298983336113721,
-          "2wikimqa": 0.03467100793743896,
-          "musique": 0.03391334552238732,
-          "dureader": 0.0339809882672227
+          "narrativeqa": 0.12438534828887542,
+          "hotpotqa": 0.13756561638892764,
+          "2wikimqa": 0.13953932660005108,
+          "musique": 0.14226933195556057,
+          "dureader": 0.14975485418808648
         },
-        "hotpotqa": 16725.689555434947,
-        "2wikimqa": 28343.10240784849,
-        "musique": 13066.153472969821,
-        "dureader": 2692548.8745464943
+        "hotpotqa": 1538.0422575998996,
+        "2wikimqa": 1042.0292834543343,
+        "musique": 1093.5203211228645,
+        "dureader": 1455.610520632795
       },
       "4": {
-        "narrativeqa": 2097.9848926769687,
+        "narrativeqa": 1471.9848926769687,
         "avg_decompression_speed_per_token_s": {
-          "narrativeqa": 0.028855727799949212,
-          "hotpotqa": 0.03189577562040279,
-          "2wikimqa": 0.031071844500044677,
-          "musique": 0.033425388388877764,
-          "dureader": 0.0334520149604482
+          "narrativeqa": 0.13095722959998915,
+          "hotpotqa": 0.13709853436113636,
+          "2wikimqa": 0.1354170242375048,
+          "musique": 0.14258555820000413,
+          "dureader": 0.1397771687525232
         },
-        "hotpotqa": 787.8842004445007,
-        "2wikimqa": 939.8331494219927,
-        "musique": 581.0387697259224,
-        "dureader": 997.5249335540706
+        "hotpotqa": 468.0205341557793,
+        "2wikimqa": 588.8813843493719,
+        "musique": 398.87496803917466,
+        "dureader": 324.1004186551689
       },
       "8": {
-        "narrativeqa": 1471.2180117696955,
+        "narrativeqa": 1383.2180117696955,
         "avg_decompression_speed_per_token_s": {
-          "narrativeqa": 0.0355991503555035,
-          "hotpotqa": 0.0333423666758866,
-          "2wikimqa": 0.03507419095007265,
-          "musique": 0.0304964695556464,
-          "dureader": 0.030388333999891336
+          "narrativeqa": 0.1459459233110869,
+          "hotpotqa": 0.13924520352774847,
+          "2wikimqa": 0.12556211917515725,
+          "musique": 0.14070927635554856,
+          "dureader": 0.14119705998026721
         },
-        "hotpotqa": 802.284734235701,
-        "2wikimqa": 681.6802542923089,
-        "musique": 539.779110360653,
-        "dureader": 707.6436972651669
+        "hotpotqa": 446.0205341557793,
+        "2wikimqa": 550.8813843493719,
+        "musique": 382.87496803917466,
+        "dureader": 270.1004186551689
       },
       "16": {
-        "narrativeqa": 1483.1907810821701,
+        "narrativeqa": 1294.1907810821701,
         "avg_decompression_speed_per_token_s": {
-          "narrativeqa": 0.03177122506677835,
-          "hotpotqa": 0.03296516347221415,
-          "2wikimqa": 0.03254733676247099,
-          "musique": 0.032523984888926966,
-          "dureader": 0.03379505437620573
+          "narrativeqa": 0.12478379415549373,
+          "hotpotqa": 0.145942637092563,
+          "2wikimqa": 0.14059489890000948,
+          "musique": 0.13546694297782047,
+          "dureader": 0.1372121938316666
         },
-        "hotpotqa": 798.1340135693624,
-        "2wikimqa": 676.287152940246,
-        "musique": 531.6343571221232,
-        "dureader": 658.044266761444
+        "hotpotqa": 445.8205341557793,
+        "2wikimqa": 550.5813843493719,
+        "musique": 382.77496803917466,
+        "dureader": 269.9004186551689
       },
       "32": {
-        "narrativeqa": 1483.2306500897835,
+        "narrativeqa": 1294.1306500897835,
         "avg_decompression_speed_per_token_s": {
-          "narrativeqa": 0.035354452577869074,
-          "hotpotqa": 0.03359118890729936,
-          "2wikimqa": 0.03455169356245165,
-          "musique": 0.03401387290005005,
-          "dureader": 0.03418790527712865
+          "narrativeqa": 0.17562543691111235,
+          "hotpotqa": 0.13392981873141602,
+          "2wikimqa": 0.14213977337497283,
+          "musique": 0.13652338262215077,
+          "dureader": 0.14447385600990154
         },
-        "hotpotqa": 798.184172797421,
-        "2wikimqa": 676.3252204976882,
-        "musique": 531.5945550737279,
-        "dureader": 658.0478086399216
+        "hotpotqa": 445.5205341557793,
+        "2wikimqa": 550.0813843493719,
+        "musique": 382.47496803917466,
+        "dureader": 269.7904186551689
       }
     }
   },
   "examples": [
     {
       "prompt": " = Robert Boulter = \n",
-      "raw": " = Robert Boulter = \n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
-      "kv_quant": " = Robert Boulter = \n\n\n\n\nIn his name is up for news\nBut it's The New and a little",
-      "ae_compressed": " = Robert Boulter = \n\n\u2014 2 on\n\n\n\n\n  of on\n:  of on on of at over",
-      "decompression_time_first_token_s": 0.004647624999961408
+      "raw": " = Robert Boulter = \nThe most important thing I have learned from the success of my career is the success of my business design",
+      "kv_quant": " = Robert Boulter = \n\n\n\n\n\n\n\nI just the latest \"In the original, the second chance.",
+      "ae_compressed": " = Robert Boulter = \n\n\n of De Ho on of of de of of in of of of of on this on on of",
+      "decompression_time_first_token_s": 0.0054381869999815535
     },
     {
       "prompt": " Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as \" Craig \" in the episode \" Teddy 's Story \" of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . \n",
-      "raw": " Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as \" Craig \" in the episode \" Teddy 's Story \" of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . \n\n\nThe following is an extract from his play \" The Bill\".\n\nBoulter is",
-      "kv_quant": " Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as \" Craig \" in the episode \" Teddy 's Story \" of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . \n\n\nOn the \u202a (D The \"t has this. More\n\n\nIn-",
-      "ae_compressed": " Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as \" Craig \" in the episode \" Teddy 's Story \" of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . \nMy.\n\nI as . The\n The  his all is  the It on the I",
-      "decompression_time_first_token_s": 0.005548348000047554
+      "raw": " Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as \" Craig \" in the episode \" Teddy 's Story \" of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . \n\n\n\n\nBoulter first appeared on television's The Bill in 2001. He was an",
+      "kv_quant": " Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as \" Craig \" in the episode \" Teddy 's Story \" of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . \nFilm. Pits, on of our beloved British police and the New York, for some of course",
+      "ae_compressed": " Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as \" Craig \" in the episode \" Teddy 's Story \" of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . \n He as the it . The as as The he in his we The same He in the other,",
+      "decompression_time_first_token_s": 0.006464875999995456
     },
     {
       "prompt": " In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as \" Kieron Fletcher \" . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . \n",
-      "raw": " In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as \" Kieron Fletcher \" . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . \n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
-      "kv_quant": " In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as \" Kieron Fletcher \" . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . \n\nM to give \"My sonar\n\n\n\n\n\n\n\n\nP is an",
-      "ae_compressed": " In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as \" Kieron Fletcher \" . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . \n his with in his with  with and short \" I and-s with with the all- in",
-      "decompression_time_first_token_s": 0.005837080999981481
+      "raw": " In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as \" Kieron Fletcher \" . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . \n\nReferences [ edit ]For this update, the U.S. Supreme Court on Wednesday called",
+      "kv_quant": " In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as \" Kieron Fletcher \" . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . \n\n\n\" in thetol and as tootel\nThis is also includes a a guest",
+      "ae_compressed": " In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as \" Kieron Fletcher \" . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . \n in the two the\n and in while on about as and and with, about as as . as",
+      "decompression_time_first_token_s": 0.009587936000002628
     },
     {
       "prompt": " = = Career = = \n",
       "raw": " = = Career = = \n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
-      "kv_quant": " = = Career = = \n\n\n\n\n\nF\n\n\n\n\n\n\n\nI had putThe project on",
-      "ae_compressed": " = = Career = = \n is this of as Prince this the of by King of ( a the is the fall of of and",
-      "decompression_time_first_token_s": 0.005544357999951899
+      "kv_quant": " = = Career = = \n\nI first-It's are all, since the U-3 and we can of and,",
+      "ae_compressed": " = = Career = = \n as\n 2 to his . version\n Diamond in on the and 1 Diamond- Diamond of his heart",
+      "decompression_time_first_token_s": 0.00824331199999051
     },
     {
       "prompt": " = = = 2000 \u2013 2005 = = = \n",
-      "raw": " = = = 2000 \u2013 2005 = = = \nIn a nutshell:\nThis post was written by Matt Pugh and is about the difference between the",
-      "kv_quant": " = = = 2000 \u2013 2005 = = = \n\n\nIn the people who just won:\n\nThe most influential is all the first for the",
-      "ae_compressed": " = = = 2000 \u2013 2005 = = = \n- 1 ,---- 3, this of ( in \"--- \" 2, in",
-      "decompression_time_first_token_s": 0.0057567429998925945
+      "raw": " = = = 2000 \u2013 2005 = = = \n\n\n\n\n- * <\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "kv_quant": " = = = 2000 \u2013 2005 = = = \nThat\u201d\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "ae_compressed": " = = = 2000 \u2013 2005 = = = \n 2 to or  2 the 2 \" to.\n- 1 (il to\n1 and",
+      "decompression_time_first_token_s": 0.00743466599999465
     }
   ],
   "config": {
